@@ -2,18 +2,8 @@ import type { CommunityBoard } from "../types.js";
 
 const BASE_URL = "https://data.cityofnewyork.us/resource";
 
-// ---------------------------------------------------------------------------
-// Known SODA dataset identifiers for NYC community boards
-// ---------------------------------------------------------------------------
-
-/** Per-borough community board member datasets */
-const CB_DATASETS: Record<number, string> = {
-  1: "", // Manhattan — no public dataset found yet
-  2: "wbau-xy7g", // Bronx
-  3: "", // Brooklyn — no public dataset found yet
-  4: "rps4-dwwk", // Queens
-  5: "", // Staten Island — no public dataset found yet
-};
+/** All 59 NYC Community Boards — ruf7-3wgc */
+const CB_DATASET = "ruf7-3wgc";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -36,43 +26,26 @@ async function sodaFetch(dataset: string, params: Record<string, string> = {}): 
   return response.json() as Promise<any[]>;
 }
 
-/**
- * Parse a district string like "105" into borough number (1) and board number (05).
- * Borough codes: 1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=Staten Island.
- */
-function parseDistrict(district: string): { borough: number; board: number; boroughName: string } {
-  const boroughMap: Record<number, string> = {
-    1: "Manhattan",
-    2: "Bronx",
-    3: "Brooklyn",
-    4: "Queens",
-    5: "Staten Island",
-  };
-
-  const num = parseInt(district, 10);
-  const borough = Math.floor(num / 100);
-  const board = num % 100;
+function mapCommunityBoard(r: any): CommunityBoard {
+  const districtCode = r.community_board_1 || "";
+  const boardNum = r.community_board?.replace(/^Community Board\s*/i, "") || "";
 
   return {
-    borough,
-    board,
-    boroughName: boroughMap[borough] ?? `Borough ${borough}`,
-  };
-}
-
-function buildCommunityBoard(
-  district: string,
-  members: Array<{ name: string; title?: string }>,
-): CommunityBoard {
-  const { boroughName, board } = parseDistrict(district);
-
-  return {
-    id: `cb-${district}`,
-    district,
-    members,
-    meetings: [], // Meetings would come from a separate dataset or scrape
+    id: `cb-${districtCode}`,
+    district: districtCode,
+    members: [
+      ...(r.cb_chair ? [{ name: r.cb_chair, title: "Chair" }] : []),
+      ...(r.cb_district_manager ? [{ name: r.cb_district_manager, title: "District Manager" }] : []),
+    ],
+    meetings: [
+      ...(r.cb_board_meeting ? [{ date: r.cb_board_meeting, description: "Board Meeting" }] : []),
+      ...(r.cb_cabinet_meeting ? [{ date: r.cb_cabinet_meeting, description: "Cabinet Meeting" }] : []),
+    ],
     contact: {
-      website: `https://www.nyc.gov/site/${boroughName.toLowerCase().replace(/ /g, "")}cb${board}/index.page`,
+      phone: r.cb_office_phone || undefined,
+      email: r.cb_office_email || undefined,
+      address: [r.cb_office_address, r.cb_address_line_2].filter(Boolean).join(", ") || undefined,
+      website: r.cb_website?.url || undefined,
     },
     scrapedAt: Date.now(),
   };
@@ -85,81 +58,34 @@ function buildCommunityBoard(
 /**
  * Get community board details for a given district.
  *
- * District format: "105" = Manhattan CB5, "301" = Brooklyn CB1, etc.
+ * District format: "303" = Brooklyn CB3, "105" = Manhattan CB5, etc.
  * The first digit is the borough code, the remaining digits are the board number.
  */
 export async function getCommunityBoard(district: string): Promise<CommunityBoard> {
-  const { borough, boroughName, board } = parseDistrict(district);
+  const rows = await sodaFetch(CB_DATASET, {
+    $where: `community_board_1='${district}'`,
+    $limit: "1",
+  });
 
-  const datasetId = CB_DATASETS[borough];
-  if (!datasetId) {
-    // No dataset for this borough — return board info without member list
-    return buildCommunityBoard(district, []);
+  if (rows.length > 0) {
+    return mapCommunityBoard(rows[0]);
   }
 
-  try {
-    const rows = await sodaFetch(datasetId, {
-      $where: borough === 2
-        ? `community_board='${board}'`  // Bronx dataset uses community_board
-        : `board='${board}'`,            // Queens dataset uses board
-      $limit: "200",
-    });
-
-    const members = rows.map((r: any) => ({
-      name: [r.first_name, r.last_name].filter(Boolean).join(" ") || r.name || "Unknown",
-      title: r.title ?? r.office ?? undefined,
-    }));
-
-    return buildCommunityBoard(district, members);
-  } catch {
-    return buildCommunityBoard(district, []);
-  }
+  // Fallback: return empty board
+  return {
+    id: `cb-${district}`,
+    district,
+    members: [],
+    meetings: [],
+    contact: {},
+    scrapedAt: Date.now(),
+  };
 }
 
 /**
  * List all 59 NYC community boards.
  */
 export async function listCommunityBoards(): Promise<CommunityBoard[]> {
-  // Fetch from all available borough datasets
-  const allRows: any[] = [];
-  for (const [boroCode, datasetId] of Object.entries(CB_DATASETS)) {
-    if (!datasetId) continue;
-    try {
-      const rows = await sodaFetch(datasetId, { $limit: "1000" });
-      // Tag each row with its borough code
-      for (const r of rows) r._boroCode = Number(boroCode);
-      allRows.push(...rows);
-    } catch { /* skip unavailable datasets */ }
-  }
-  const rows = allRows;
-
-  const boroughToCode: Record<string, number> = {
-    Manhattan: 1,
-    Bronx: 2,
-    Brooklyn: 3,
-    Queens: 4,
-    "Staten Island": 5,
-  };
-
-  // Group rows by district
-  const grouped = new Map<string, Array<{ name: string; title?: string }>>();
-
-  for (const r of rows) {
-    const bCode = boroughToCode[r.borough];
-    if (!bCode) continue;
-    const boardNum = parseInt(r.board_number, 10);
-    if (isNaN(boardNum)) continue;
-
-    const district = `${bCode}${String(boardNum).padStart(2, "0")}`;
-    if (!grouped.has(district)) grouped.set(district, []);
-
-    grouped.get(district)!.push({
-      name: [r.first_name, r.last_name].filter(Boolean).join(" ") || "Unknown",
-      title: r.title ?? undefined,
-    });
-  }
-
-  return Array.from(grouped.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([district, members]) => buildCommunityBoard(district, members));
+  const rows = await sodaFetch(CB_DATASET, { $limit: "100" });
+  return rows.map(mapCommunityBoard);
 }
