@@ -157,9 +157,14 @@ async function censusLookup(address: string): Promise<CensusResult> {
   const geographies = json.result?.addressMatches?.[0]?.geographies;
   if (!geographies) return { congressional: null, stateSenate: null, stateAssembly: null };
 
-  const congress = geographies["119th Congressional Districts"]?.[0];
-  const senateArr = geographies["State Legislative Districts - Upper"]?.[0];
-  const assemblyArr = geographies["State Legislative Districts - Lower"]?.[0];
+  // Census API key names change with redistricting cycles — match flexibly
+  const congressKey = Object.keys(geographies).find(k => k.includes("Congressional District"));
+  const senateKey = Object.keys(geographies).find(k => k.includes("Legislative Districts - Upper"));
+  const assemblyKey = Object.keys(geographies).find(k => k.includes("Legislative Districts - Lower"));
+
+  const congress = congressKey ? geographies[congressKey]?.[0] : undefined;
+  const senateArr = senateKey ? geographies[senateKey]?.[0] : undefined;
+  const assemblyArr = assemblyKey ? geographies[assemblyKey]?.[0] : undefined;
 
   return {
     congressional: safeNum(congress?.GEOID?.toString().slice(-2)) ?? safeNum(congress?.CD119FP),

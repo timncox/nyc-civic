@@ -134,17 +134,42 @@ async function fetchAllPages<T>(
 
 /**
  * Get current congress members for a state + congressional district.
+ * Uses the congress-specific endpoint and filters client-side as fallback.
  */
 export async function getCongressMembers(state: string, district: number): Promise<Rep[]> {
+  // Try the specific state/district endpoint first (119th Congress)
+  try {
+    const body = (await congressFetch(`/member/congress/119/${state.toUpperCase()}/${district}`, {
+      currentMember: "true",
+      limit: "20",
+    })) as any;
+
+    const members = body.members ?? [];
+    if (members.length > 0) {
+      return members.map((m: any) => mapMember(m, "federal_house"));
+    }
+  } catch {
+    // Fall through to general endpoint
+  }
+
+  // Fallback: general member search with client-side filtering
   const body = (await congressFetch("/member", {
     stateCode: state.toUpperCase(),
-    district: String(district),
     currentMember: "true",
-    limit: "20",
+    limit: "250",
   })) as any;
 
   const members = body.members ?? [];
-  return members.map((m: any) => mapMember(m, levelForChamber(m.terms?.item?.[m.terms.item.length - 1]?.chamber)));
+  const stateUpper = state.toUpperCase();
+  return members
+    .filter((m: any) => {
+      const mState = (m.state ?? "").toUpperCase();
+      const terms = m.terms?.item ?? [];
+      const latestTerm = terms[terms.length - 1];
+      const mDistrict = latestTerm?.district;
+      return mState === stateUpper && (mDistrict === undefined || mDistrict === district);
+    })
+    .map((m: any) => mapMember(m, levelForChamber(m.terms?.item?.[m.terms.item.length - 1]?.chamber)));
 }
 
 /**
@@ -229,15 +254,23 @@ export async function getMemberVotes(
 
 /**
  * Get both current NY senators.
+ * Filters client-side since DEMO_KEY may not respect stateCode filter.
  */
 export async function getNYSenators(): Promise<Rep[]> {
   const body = (await congressFetch("/member", {
     stateCode: "NY",
-    chamber: "senate",
     currentMember: "true",
-    limit: "10",
+    limit: "250",
   })) as any;
 
   const members = body.members ?? [];
-  return members.map((m: any) => mapMember(m, "federal_senate"));
+  return members
+    .filter((m: any) => {
+      const mState = (m.state ?? "").toUpperCase();
+      const terms = m.terms?.item ?? [];
+      const latestTerm = terms[terms.length - 1];
+      const chamber = (latestTerm?.chamber ?? "").toLowerCase();
+      return mState === "NY" && chamber === "senate";
+    })
+    .map((m: any) => mapMember(m, "federal_senate"));
 }
