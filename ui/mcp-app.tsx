@@ -112,6 +112,8 @@ function Dashboard() {
         color: colors.text,
         fontFamily,
         minHeight: "100vh",
+        maxHeight: "100vh",
+        overflow: "auto",
         padding: 0,
         margin: 0,
       }}

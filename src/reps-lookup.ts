@@ -27,10 +27,10 @@ export async function lookupCouncilMember(district: number): Promise<Rep | null>
 
     if (!name) return null;
 
-    // Extract committees
+    // Extract committees (filter out nav links that just say "Committees")
     const committees = [...html.matchAll(/committees\/[^"]*"[^>]*>([^<]+)<\/a>/gi)]
       .map(m => m[1].trim())
-      .filter(c => c.length > 3);
+      .filter(c => c.startsWith("Committee on") || c.startsWith("Subcommittee"));
 
     // Extract email
     const emailMatch = html.match(/mailto:([^"]+@council\.nyc\.gov)/i);

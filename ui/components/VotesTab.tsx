@@ -156,7 +156,15 @@ export function VotesTab({ app, districts }: VotesTabProps) {
       {error && <div style={{ color: colors.no, fontSize: 14 }}>{error}</div>}
 
       {!loading && !error && votes.length === 0 && selectedLevel && (
-        <div style={{ color: colors.muted, fontSize: 14 }}>No votes found for this representative.</div>
+        <div style={{ color: colors.muted, fontSize: 13, lineHeight: 1.6, padding: "12px 0" }}>
+          No voting data available yet. City and state vote scraping requires Playwright access to council.nyc.gov and nysenate.gov which may be temporarily blocked. Use <strong>sync_data</strong> to retry, or search for specific bills in the Bills tab.
+        </div>
+      )}
+
+      {!selectedLevel && (
+        <div style={{ color: colors.muted, fontSize: 13, padding: "20px 0", textAlign: "center", lineHeight: 1.6 }}>
+          Select a representative above to view their voting record.
+        </div>
       )}
 
       {!loading && votes.length > 0 && (

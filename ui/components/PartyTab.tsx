@@ -94,8 +94,31 @@ export function PartyTab({ app, address, districts }: PartyTabProps) {
     );
   }
 
-  if (error) return <div style={{ color: colors.no, fontSize: 14 }}>{error}</div>;
-  if (!data) return <div style={{ color: colors.muted, fontSize: 14 }}>No party data available.</div>;
+  if (error || !data) {
+    const boroughOrgs: Record<string, { name: string; site: string }> = {
+      Manhattan: { name: "New York County Democratic Committee", site: "nycdemocrats.org" },
+      Brooklyn: { name: "Kings County Democratic Committee", site: "brooklyndemocrats.com" },
+      Queens: { name: "Queens County Democratic Organization", site: "queensdemocrats.org" },
+      Bronx: { name: "Bronx Democratic County Committee", site: "bronxdemocrats.org" },
+      "Staten Island": { name: "Richmond County Democratic Committee", site: "richmondcountydemocrats.com" },
+    };
+    const boro = districts.borough || "";
+    const org = boroughOrgs[boro];
+    return (
+      <div style={{ color: colors.muted, fontSize: 13, lineHeight: 1.8 }}>
+        <div style={{ marginBottom: 12 }}>Party organization data is being connected. In the meantime:</div>
+        {org && (
+          <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, color: colors.text, marginBottom: 4 }}>{org.name}</div>
+            <div>Website: <span style={{ color: colors.accent }}>{org.site}</span></div>
+            {districts.stateAssembly && <div>Your Assembly District: {districts.stateAssembly}</div>}
+            {districts.electionDistrict && <div>Your Election District: {districts.electionDistrict}</div>}
+          </div>
+        )}
+        <div>To get involved with your local Democratic Party, visit your borough committee's website or attend a county committee meeting.</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
