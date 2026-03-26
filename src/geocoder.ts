@@ -118,18 +118,47 @@ interface CensusResult {
  * Expects a comma-separated format like "123 Main St, New York, NY" or
  * at minimum "123 Main St, New York, NY 10001".  Falls back gracefully.
  */
+const NYC_BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
+
 function parseAddressParts(address: string): {
   street: string;
   city: string;
   state: string;
 } {
   const parts = address.split(",").map((s) => s.trim());
-  const street = parts[0] ?? address;
-  const city = parts[1] ?? "New York";
-  // The state may include a zip — strip it.
-  const stateRaw = parts[2] ?? "NY";
-  const state = stateRaw.replace(/\d{5}(-\d{4})?/, "").trim() || "NY";
-  return { street, city, state };
+
+  if (parts.length >= 3) {
+    // "530 Lafayette Ave, Brooklyn, NY"
+    const stateRaw = parts[2];
+    const state = stateRaw.replace(/\d{5}(-\d{4})?/, "").trim() || "NY";
+    return { street: parts[0], city: parts[1], state };
+  }
+
+  if (parts.length === 2) {
+    // "530 Lafayette Ave, Brooklyn" or "530 Lafayette Ave, Brooklyn NY"
+    const cityState = parts[1].split(/\s+/);
+    const lastWord = cityState[cityState.length - 1]?.toUpperCase();
+    if (lastWord === "NY" || lastWord === "NYC") {
+      return { street: parts[0], city: cityState.slice(0, -1).join(" ") || "New York", state: "NY" };
+    }
+    return { street: parts[0], city: parts[1], state: "NY" };
+  }
+
+  // No commas — try to detect borough name at the end
+  // "530 lafayette ave brooklyn" or "530 lafayette ave brooklyn ny"
+  const lower = address.toLowerCase();
+  for (const boro of NYC_BOROUGHS) {
+    const idx = lower.lastIndexOf(boro);
+    if (idx > 0) {
+      const street = address.slice(0, idx).trim();
+      const rest = address.slice(idx + boro.length).trim().toUpperCase();
+      const state = (rest === "NY" || rest === "NYC" || rest === "") ? "NY" : rest || "NY";
+      return { street, city: boro.charAt(0).toUpperCase() + boro.slice(1), state };
+    }
+  }
+
+  // Fallback: treat entire input as street
+  return { street: address, city: "New York", state: "NY" };
 }
 
 async function censusLookup(address: string): Promise<CensusResult> {

@@ -6,8 +6,14 @@ const BASE_URL = "https://data.cityofnewyork.us/resource";
 // Known SODA dataset identifiers for NYC community boards
 // ---------------------------------------------------------------------------
 
-/** Community Board application/appointment dataset */
-const CB_MEMBERS_DATASET = "bj99-s4bq";
+/** Per-borough community board member datasets */
+const CB_DATASETS: Record<number, string> = {
+  1: "", // Manhattan — no public dataset found yet
+  2: "wbau-xy7g", // Bronx
+  3: "", // Brooklyn — no public dataset found yet
+  4: "rps4-dwwk", // Queens
+  5: "", // Staten Island — no public dataset found yet
+};
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -83,31 +89,49 @@ function buildCommunityBoard(
  * The first digit is the borough code, the remaining digits are the board number.
  */
 export async function getCommunityBoard(district: string): Promise<CommunityBoard> {
-  const { boroughName, board } = parseDistrict(district);
+  const { borough, boroughName, board } = parseDistrict(district);
 
-  // Query the CB members dataset, filtering by borough and board number
-  const rows = await sodaFetch(CB_MEMBERS_DATASET, {
-    $where: `borough='${boroughName}' AND board_number='${board}'`,
-    $limit: "200",
-  });
+  const datasetId = CB_DATASETS[borough];
+  if (!datasetId) {
+    // No dataset for this borough — return board info without member list
+    return buildCommunityBoard(district, []);
+  }
 
-  const members = rows.map((r: any) => ({
-    name: [r.first_name, r.last_name].filter(Boolean).join(" ") || r.name || "Unknown",
-    title: r.title ?? r.office ?? undefined,
-  }));
+  try {
+    const rows = await sodaFetch(datasetId, {
+      $where: borough === 2
+        ? `community_board='${board}'`  // Bronx dataset uses community_board
+        : `board='${board}'`,            // Queens dataset uses board
+      $limit: "200",
+    });
 
-  return buildCommunityBoard(district, members);
+    const members = rows.map((r: any) => ({
+      name: [r.first_name, r.last_name].filter(Boolean).join(" ") || r.name || "Unknown",
+      title: r.title ?? r.office ?? undefined,
+    }));
+
+    return buildCommunityBoard(district, members);
+  } catch {
+    return buildCommunityBoard(district, []);
+  }
 }
 
 /**
  * List all 59 NYC community boards.
  */
 export async function listCommunityBoards(): Promise<CommunityBoard[]> {
-  // Fetch a large batch and group by borough + board
-  const rows = await sodaFetch(CB_MEMBERS_DATASET, {
-    $select: "borough, board_number, first_name, last_name, title",
-    $limit: "5000",
-  });
+  // Fetch from all available borough datasets
+  const allRows: any[] = [];
+  for (const [boroCode, datasetId] of Object.entries(CB_DATASETS)) {
+    if (!datasetId) continue;
+    try {
+      const rows = await sodaFetch(datasetId, { $limit: "1000" });
+      // Tag each row with its borough code
+      for (const r of rows) r._boroCode = Number(boroCode);
+      allRows.push(...rows);
+    } catch { /* skip unavailable datasets */ }
+  }
+  const rows = allRows;
 
   const boroughToCode: Record<string, number> = {
     Manhattan: 1,
