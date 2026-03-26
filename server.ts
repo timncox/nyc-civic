@@ -19,6 +19,7 @@ import { z } from "zod";
 import { getDb, persistDb } from "./src/db.js";
 import { resolveAddress } from "./src/geocoder.js";
 import { loadConfig } from "./src/config.js";
+import { lookupAllReps, lookupCouncilMember } from "./src/reps-lookup.js";
 import { getCongressMembers, getNYSenators, searchBills as searchCongressBills, getBillDetails as getCongressBillDetails, getMemberVotes as getCongressMemberVotes } from "./src/apis/congress.js";
 import { getCommunityBoard as fetchCommunityBoard } from "./src/apis/socrata.js";
 import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilVotes, scrapeCouncilMemberVotes } from "./src/scrapers/council.js";
@@ -109,40 +110,14 @@ server.tool(
   },
   async ({ address, level }) => {
     const districts = await resolveAddress(address);
-    const reps: Rep[] = [];
-    const errors: string[] = [];
 
-    if ((level === "all" || level === "city") && districts.council) {
-      try {
-        const result = await scrapeCouncilMembers();
-        const member = result.reps.find(r => r.district === String(districts.council));
-        if (member) reps.push(member);
-        errors.push(...result.errors);
-      } catch (e: any) { errors.push(`Council: ${e.message}`); }
-    }
-
-    if ((level === "all" || level === "state") && districts.stateSenate) {
-      try {
-        const result = await scrapeStateSenator(districts.stateSenate);
-        if (result.rep) reps.push(result.rep);
-        errors.push(...result.errors);
-      } catch (e: any) { errors.push(`Senate: ${e.message}`); }
-    }
-
-    if ((level === "all" || level === "state") && districts.stateAssembly) {
-      try {
-        const result = await scrapeAssemblyMember(districts.stateAssembly);
-        if (result.rep) reps.push(result.rep);
-        errors.push(...result.errors);
-      } catch (e: any) { errors.push(`Assembly: ${e.message}`); }
-    }
-
-    if (level === "all" || level === "federal") {
-      if (districts.congressional) {
-        try { reps.push(...await getCongressMembers("NY", districts.congressional)); } catch (e: any) { errors.push(`Congress: ${e.message}`); }
-      }
-      try { reps.push(...await getNYSenators()); } catch (e: any) { errors.push(`Senators: ${e.message}`); }
-    }
+    // Use the lightweight fetch-based lookup (no Playwright)
+    const { reps, errors } = await lookupAllReps({
+      council: (level === "all" || level === "city") ? districts.council : null,
+      stateAssembly: (level === "all" || level === "state") ? districts.stateAssembly : null,
+      stateSenate: (level === "all" || level === "state") ? districts.stateSenate : null,
+      congressional: (level === "all" || level === "federal") ? districts.congressional : null,
+    });
 
     return { content: [{ type: "text" as const, text: JSON.stringify({ reps, errors: errors.length ? errors : undefined }) }] };
   }
