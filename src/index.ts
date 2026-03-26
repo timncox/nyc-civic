@@ -379,7 +379,7 @@ server.tool(
 
       const result = db.exec(query, [param]);
       if (result.length > 0 && result[0].values.length > 0) {
-        const records = result[0].values.map(row => ({
+        const records = result[0].values.map((row: any[]) => ({
           sessionName: row[2],
           present: Boolean(row[3]),
           date: row[4],
