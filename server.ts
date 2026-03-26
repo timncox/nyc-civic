@@ -12,6 +12,7 @@ import cors from "cors";
 import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { z } from "zod";
 
 // Import existing tool logic
@@ -27,13 +28,14 @@ import { getPartyForDistrict, scrapeAllBoroughParties } from "./src/scrapers/dem
 import { lookupElectionDistrict } from "./src/scrapers/boe.js";
 import type { Rep, Bill, Vote } from "./src/types.js";
 
+const resourceUri = "ui://civic-dashboard/mcp-app.html";
+
+function createServer(): McpServer {
 const server = new McpServer({
   name: "nyc-civic",
   version: "2.0.0",
   description: "Interactive NYC civic tracker — reps, votes, bills, Democratic Party org",
 });
-
-const resourceUri = "ui://civic-dashboard/mcp-app.html";
 
 // ─── Primary App Tool ────────────────────────────────────────────────────────
 
@@ -44,11 +46,16 @@ registerAppTool(
     title: "NYC Civic Dashboard",
     description: "Show an interactive dashboard of NYC elected representatives, voting records, legislation, and Democratic Party organization for a given address.",
     inputSchema: {
-      address: z.string().describe("NYC street address"),
+      address: z.string().default("").describe("NYC street address"),
     },
     _meta: { ui: { resourceUri } },
   },
   async ({ address }: { address: string }) => {
+    if (!address) {
+      return {
+        content: [{ type: "text", text: JSON.stringify({ address: null, districts: null, message: "Enter an NYC address to get started" }) }],
+      };
+    }
     const districts = await resolveAddress(address);
     // Try election district
     if (!districts.electionDistrict) {
@@ -274,25 +281,29 @@ server.tool(
   }
 );
 
+return server;
+} // end createServer
+
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
 
 await getDb(); // Initialize database
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const expressApp = express();
+expressApp.use(cors());
+expressApp.use(express.json());
 
-app.post("/mcp", async (req, res) => {
+expressApp.post("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
   res.on("close", () => transport.close());
-  await server.connect(transport);
+  const sessionServer = createServer();
+  await sessionServer.connect(transport);
   await transport.handleRequest(req, res, req.body);
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => {
+expressApp.listen(PORT, () => {
   console.log(`NYC Civic MCP App server listening on http://localhost:${PORT}/mcp`);
 });
