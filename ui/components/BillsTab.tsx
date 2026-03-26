@@ -216,8 +216,15 @@ export function BillsTab({ app }: BillsTabProps) {
 
       {error && <div style={{ color: colors.no, fontSize: 14 }}>{error}</div>}
 
+      {!loading && !error && bills.length === 0 && !query.trim() && (
+        <div style={{ color: colors.muted, fontSize: 13, padding: "20px 0", textAlign: "center", lineHeight: 1.6 }}>
+          Search for legislation across city, state, and federal levels.<br />
+          Try: "housing", "rent stabilization", "climate", "education"
+        </div>
+      )}
+
       {!loading && !error && bills.length === 0 && query.trim() && (
-        <div style={{ color: colors.muted, fontSize: 14 }}>No bills found.</div>
+        <div style={{ color: colors.muted, fontSize: 14 }}>No bills found for "{query}".</div>
       )}
 
       {!loading && bills.length > 0 && (

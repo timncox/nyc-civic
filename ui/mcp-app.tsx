@@ -100,7 +100,7 @@ function Dashboard() {
       districts.stateSenate != null && `Senate ${districts.stateSenate}`,
       districts.stateAssembly != null && `Assembly ${districts.stateAssembly}`,
       districts.congressional != null && `Congressional ${districts.congressional}`,
-      districts.communityBoard && `${districts.borough ?? ""} CB${districts.communityBoard}`,
+      districts.communityBoard && `${districts.borough ?? ""} CB${parseInt(districts.communityBoard.slice(-2), 10)}`,
     ]
       .filter(Boolean)
       .join(" \u00B7 ");

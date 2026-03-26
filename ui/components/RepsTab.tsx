@@ -71,7 +71,15 @@ export function RepsTab({ app, address, districts }: RepsTabProps) {
           const first = result.content[0];
           if ("text" in first && typeof first.text === "string") {
             const data = JSON.parse(first.text);
-            setReps(data.reps || []);
+            // Filter out reps with bad names (page titles from failed scrapes)
+            const badNames = ["new york city council", "new york state assembly", "new york state senate", "nys assembly", "nyc council"];
+            const validReps = (data.reps || []).filter(
+              (r: Rep) => r.name && !badNames.includes(r.name.toLowerCase().trim())
+            );
+            setReps(validReps);
+            if (data.errors?.length) {
+              setError(`Some data unavailable: ${data.errors.length} source(s) failed. Showing what we have.`);
+            }
             return;
           }
         }
@@ -91,9 +99,8 @@ export function RepsTab({ app, address, districts }: RepsTabProps) {
   }, [app, address, districts]);
 
   if (loading) return <LoadingPulse />;
-  if (error) return <div style={{ color: colors.no, fontSize: 14 }}>{error}</div>;
-  if (reps.length === 0) {
-    return <div style={{ color: colors.muted, fontSize: 14 }}>No representatives found.</div>;
+  if (error && reps.length === 0) {
+    return <div style={{ color: colors.no, fontSize: 14 }}>{error}</div>;
   }
 
   // Group by level
@@ -110,6 +117,16 @@ export function RepsTab({ app, address, districts }: RepsTabProps) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {error && (
+        <div style={{ background: "#1c1917", border: "1px solid #44403c", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#fbbf24" }}>
+          {error}
+        </div>
+      )}
+      {reps.length === 0 && (
+        <div style={{ color: colors.muted, fontSize: 14 }}>
+          Unable to load representatives — scrapers may be temporarily unavailable. Your districts: Council {districts.council}, Senate {districts.stateSenate}, Assembly {districts.stateAssembly}, CD-{districts.congressional}.
+        </div>
+      )}
       {sortedLevels.map((level) => (
         <div key={level}>
           <h3
