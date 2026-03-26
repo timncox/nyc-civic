@@ -140,19 +140,23 @@ async function censusLookup(address: string): Promise<CensusResult> {
     state,
     benchmark: "Public_AR_Current",
     vintage: "Current_Current",
+    layers: "all",
     format: "json",
   });
   const url = `https://geocoding.geo.census.gov/geocoder/geographies/address?${params}`;
-  const res = await fetch(url);
-  if (!res.ok) return { congressional: null, stateSenate: null, stateAssembly: null };
 
-  const json = (await res.json()) as {
-    result?: {
-      addressMatches?: Array<{
-        geographies?: Record<string, Array<Record<string, unknown>>>;
-      }>;
-    };
-  };
+  console.error("[nyc-civic] Census URL:", url);
+  let json: any;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    console.error("[nyc-civic] Census status:", res.status);
+    if (!res.ok) return { congressional: null, stateSenate: null, stateAssembly: null };
+    json = await res.json();
+    console.error("[nyc-civic] Census matches:", json?.result?.addressMatches?.length ?? 0);
+  } catch (fetchErr: any) {
+    console.error("[nyc-civic] Census fetch error:", fetchErr?.message ?? fetchErr);
+    return { congressional: null, stateSenate: null, stateAssembly: null };
+  }
 
   const geographies = json.result?.addressMatches?.[0]?.geographies;
   if (!geographies) return { congressional: null, stateSenate: null, stateAssembly: null };
@@ -187,14 +191,20 @@ async function censusLookup(address: string): Promise<CensusResult> {
 export async function lookupAddress(address: string): Promise<DistrictInfo> {
   const info = emptyDistrict();
 
-  try {
-    // Step 1: GeoSearch → lat/lng + BBL
-    const geo = await geoSearch(address);
+  // Run GeoSearch and Census in parallel — they're independent
+  const [geoResult, censusResult] = await Promise.allSettled([
+    geoSearch(address),
+    censusLookup(address),
+  ]);
+
+  // Apply GeoSearch results
+  if (geoResult.status === "fulfilled") {
+    const geo = geoResult.value;
     info.lat = geo.lat;
     info.lng = geo.lng;
     info.borough = geo.borough;
 
-    // Step 2: PLUTO → council + community district (requires BBL)
+    // PLUTO requires BBL from GeoSearch
     if (geo.bbl) {
       try {
         const pluto = await plutoLookup(geo.bbl);
@@ -204,18 +214,17 @@ export async function lookupAddress(address: string): Promise<DistrictInfo> {
         // PLUTO failed — continue with what we have
       }
     }
-  } catch {
-    // GeoSearch failed entirely — continue to Census with what we have
   }
 
-  // Step 3: Census → congressional, state senate, assembly
-  try {
-    const census = await censusLookup(address);
-    info.congressional = census.congressional;
-    info.stateSenate = census.stateSenate;
-    info.stateAssembly = census.stateAssembly;
-  } catch {
-    // Census failed — return partial results
+  // Apply Census results
+  console.error("[nyc-civic] Census result status:", censusResult.status);
+  if (censusResult.status === "fulfilled") {
+    console.error("[nyc-civic] Census values:", JSON.stringify(censusResult.value));
+    info.congressional = censusResult.value.congressional;
+    info.stateSenate = censusResult.value.stateSenate;
+    info.stateAssembly = censusResult.value.stateAssembly;
+  } else {
+    console.error("[nyc-civic] Census lookup rejected:", censusResult.reason);
   }
 
   return info;

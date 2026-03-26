@@ -7,7 +7,10 @@ let dbPath: string;
 
 export async function getDb(): Promise<Database> {
   if (db) return db;
-  dbPath = process.env.NYC_CIVIC_DB_PATH || new URL("../../data/nyc-civic.db", import.meta.url).pathname;
+  // Resolve relative to the project root (two dirs up from dist/db.js)
+  const defaultPath = new URL("../../data/nyc-civic.db", import.meta.url).pathname;
+  // If the resolved path escapes the project, use ~/.nyc-civic/ instead
+  dbPath = process.env.NYC_CIVIC_DB_PATH || defaultPath;
   const dir = dirname(dbPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
