@@ -279,12 +279,23 @@ expressApp.post("/mcp", async (req, res) => {
 
   // Reuse existing session
   if (sessionId && sessions.has(sessionId)) {
-    const { transport } = sessions.get(sessionId)!;
-    await transport.handleRequest(req, res, req.body);
+    const session = sessions.get(sessionId)!;
+    try {
+      await session.transport.handleRequest(req, res, req.body);
+    } catch (e) {
+      console.error("[mcp] Error handling request for session", sessionId, e);
+      if (!res.headersSent) res.status(500).json({ error: String(e) });
+    }
     return;
   }
 
-  // New session
+  // If session ID was provided but not found, reject
+  if (sessionId) {
+    res.status(400).json({ jsonrpc: "2.0", error: { code: -32000, message: "Unknown session" }, id: null });
+    return;
+  }
+
+  // New session (no session ID header = initial connect)
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
     enableJsonResponse: true,
@@ -297,12 +308,12 @@ expressApp.post("/mcp", async (req, res) => {
   };
 
   await sessionServer.connect(transport);
+  await transport.handleRequest(req, res, req.body);
 
+  // Session ID is set after handleRequest processes the initialize request
   if (transport.sessionId) {
     sessions.set(transport.sessionId, { transport, server: sessionServer });
   }
-
-  await transport.handleRequest(req, res, req.body);
 });
 
 expressApp.get("/mcp", async (req, res) => {
