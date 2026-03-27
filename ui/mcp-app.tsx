@@ -22,7 +22,11 @@ export interface DistrictInfo {
 }
 
 // ── App instance (module-level singleton) ──────────────────────────────
-const app = new App({ name: "NYC Civic Tracker", version: "1.0.0" });
+const app = new App(
+  { name: "NYC Civic Tracker", version: "1.0.0" },
+  {},
+  { autoResize: true },
+);
 
 // ── Design tokens ──────────────────────────────────────────────────────
 const colors = {
@@ -61,7 +65,16 @@ function Dashboard() {
 
   // Listen for initial tool result from host (civic_dashboard)
   useEffect(() => {
-    app.ontoolresult = (params) => {
+    // Receive tool input (the address passed to civic_dashboard)
+    app.ontoolinput = (params: any) => {
+      try {
+        const addr = params?.arguments?.address || params?.address;
+        if (addr) setAddress(addr);
+      } catch { /* ignore */ }
+    };
+
+    // Receive tool result (district data from civic_dashboard)
+    app.ontoolresult = (params: any) => {
       try {
         if (params.content && Array.isArray(params.content) && params.content.length > 0) {
           const first = params.content[0];
@@ -111,9 +124,7 @@ function Dashboard() {
         background: colors.bg,
         color: colors.text,
         fontFamily,
-        minHeight: "100vh",
-        maxHeight: "100vh",
-        overflow: "auto",
+        minHeight: 400,
         padding: 0,
         margin: 0,
       }}
