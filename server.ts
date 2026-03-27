@@ -22,7 +22,7 @@ import { loadConfig } from "./src/config.js";
 import { lookupAllReps, lookupCouncilMember } from "./src/reps-lookup.js";
 import { getCongressMembers, getNYSenators, searchBills as searchCongressBills, getBillDetails as getCongressBillDetails, getMemberVotes as getCongressMemberVotes } from "./src/apis/congress.js";
 import { getCommunityBoard as fetchCommunityBoard } from "./src/apis/socrata.js";
-import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilVotes, scrapeCouncilMemberVotes } from "./src/scrapers/council.js";
+import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilVotes, scrapeCouncilMemberVotes, getCouncilBill } from "./src/scrapers/council.js";
 import { scrapeStateSenator, searchSenateBills, scrapeSenateBillVotes, scrapeSenatorVotes } from "./src/scrapers/state-senate.js";
 import { scrapeAssemblyMember, searchAssemblyBills, scrapeAssemblyMemberVotes } from "./src/scrapers/state-assembly.js";
 import { getPartyForDistrict, scrapeAllBoroughParties } from "./src/scrapers/dem-party.js";
@@ -143,6 +143,23 @@ server.tool(
       } else if (level === "state_assembly") {
         const r = await scrapeAssemblyMemberVotes(district);
         votes.push(...r.votes); errors.push(...r.errors);
+      } else if (level === "federal") {
+        // Look up congress members for this district to get bioguideIds
+        const members = await getCongressMembers("NY", district);
+        const senators = await getNYSenators();
+        const allFederal = [...members, ...senators];
+        const nameMap: Record<string, string> = {};
+        for (const rep of allFederal) nameMap[rep.id] = rep.name;
+        for (const rep of allFederal) {
+          try {
+            const memberVotes = await getCongressMemberVotes(rep.id);
+            // Enrich votes with rep name for the UI
+            for (const v of memberVotes) {
+              (v as any).repName = nameMap[v.repId] || v.repId;
+            }
+            votes.push(...memberVotes);
+          } catch (e: any) { errors.push(`${rep.name}: ${e.message}`); }
+        }
       }
     } catch (e: any) { errors.push(e.message); }
     return { content: [{ type: "text" as const, text: JSON.stringify({ votes, errors: errors.length ? errors : undefined }) }] };
@@ -184,11 +201,9 @@ server.tool(
   async ({ bill_id, level }) => {
     try {
       if (level === "city") {
-        const leg = await scrapeCouncilLegislation();
-        const bill = leg.bills.find(b => b.id === bill_id);
-        if (bill) {
-          const votes = await scrapeCouncilVotes(bill_id);
-          return { content: [{ type: "text" as const, text: JSON.stringify({ ...bill, votes: votes.votes }) }] };
+        const result = await getCouncilBill(bill_id);
+        if (result) {
+          return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
         }
       } else if (level === "federal") {
         const match = bill_id.match(/^([a-z]+)(\d+)-(\d+)$/i);

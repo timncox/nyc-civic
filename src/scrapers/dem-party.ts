@@ -1,21 +1,26 @@
-import { chromium, type Browser, type Page } from "playwright";
+/**
+ * NYC Democratic Party organization data.
+ *
+ * Strategy: Wikipedia API for boroughs with pages (Manhattan, Brooklyn),
+ * known-leaders dataset for all 5 boroughs (county chairs change rarely),
+ * and direct fetch for borough party websites when accessible.
+ *
+ * No Playwright dependency.
+ */
+
 import type { PartyOrg } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Borough sites
+// Borough configuration
 // ---------------------------------------------------------------------------
 
-const BOROUGH_SITES: Record<string, { url: string; county: string }> = {
-  manhattan: { url: "https://nycdemocrats.org", county: "New York" },
-  brooklyn: { url: "https://brooklyndemocrats.com", county: "Kings" },
+const BOROUGH_SITES: Record<string, { url: string; county: string; wikipedia?: string }> = {
+  manhattan: { url: "https://manhattandemocrats.org", county: "New York", wikipedia: "Manhattan_Democratic_Party" },
+  brooklyn: { url: "https://brooklyndemocrats.com", county: "Kings", wikipedia: "Brooklyn_Democratic_Party" },
   queens: { url: "https://queensdemocrats.org", county: "Queens" },
   bronx: { url: "https://bronxdemocrats.org", county: "Bronx" },
   statenisland: { url: "https://richmondcountydemocrats.com", county: "Richmond" },
 };
-
-// ---------------------------------------------------------------------------
-// Name normalization
-// ---------------------------------------------------------------------------
 
 const BOROUGH_ALIASES: Record<string, string> = {
   manhattan: "manhattan",
@@ -32,503 +37,56 @@ const BOROUGH_ALIASES: Record<string, string> = {
   richmond: "statenisland",
 };
 
-/**
- * Normalize a borough name to a canonical key used in BOROUGH_SITES.
- *
- * Accepts common aliases ("New York" → "manhattan", "Kings" → "brooklyn",
- * "Richmond" → "statenisland", etc.).
- */
+// ---------------------------------------------------------------------------
+// Known leadership (updated periodically — county chairs serve multi-year terms)
+// ---------------------------------------------------------------------------
+
+interface KnownLeader {
+  name: string;
+  role: PartyOrg["role"];
+  details?: Record<string, unknown>;
+}
+
+const KNOWN_LEADERS: Record<string, KnownLeader[]> = {
+  manhattan: [
+    { name: "Kyle Ishmael", role: "chair", details: { title: "County Chair" } },
+  ],
+  brooklyn: [
+    { name: "Rodneyse Bichotte Hermelyn", role: "chair", details: { title: "County Chair", alsoServes: "Assembly Member, District 42" } },
+  ],
+  queens: [
+    { name: "Gregory Meeks", role: "chair", details: { title: "County Chair", alsoServes: "U.S. Representative, NY-5" } },
+  ],
+  bronx: [
+    { name: "Jamaal Bailey", role: "chair", details: { title: "County Chair", alsoServes: "State Senator, District 36" } },
+  ],
+  statenisland: [
+    { name: "Jessica Scarcella-Spanton", role: "chair", details: { title: "County Chair", alsoServes: "State Senator, District 23" } },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const FETCH_TIMEOUT = 12_000;
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
+
 export function boroughFromName(borough: string): string {
   const key = borough.trim().toLowerCase().replace(/\s+/g, " ");
   return BOROUGH_ALIASES[key] ?? key;
 }
 
-// ---------------------------------------------------------------------------
-// Slug helper
-// ---------------------------------------------------------------------------
-
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
 function makeId(borough: string, role: PartyOrg["role"], name: string): string {
   return `dem-${borough}-${role}-${slugify(name)}`;
 }
-
-// ---------------------------------------------------------------------------
-// Per-borough scrapers
-// ---------------------------------------------------------------------------
-
-/**
- * Scrape leadership from a typical party website.
- *
- * Strategy: look for pages containing "leadership", "officers", "executive",
- * or scan the homepage for common headings.  Because these sites vary wildly,
- * we try several selectors and return whatever we find.
- */
-async function scrapeLeadership(
-  page: Page,
-  baseUrl: string,
-  borough: string,
-  errors: string[],
-): Promise<PartyOrg[]> {
-  const orgs: PartyOrg[] = [];
-  const now = Date.now();
-
-  // Candidate paths for a leadership page
-  const paths = [
-    "/leadership",
-    "/officers",
-    "/about",
-    "/about-us",
-    "/executive-committee",
-    "/our-leadership",
-    "/county-committee",
-  ];
-
-  let found = false;
-
-  for (const path of paths) {
-    try {
-      const resp = await page.goto(`${baseUrl}${path}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      if (!resp || resp.status() >= 400) continue;
-
-      // Wait a moment for any JS rendering
-      await page.waitForTimeout(2_000);
-
-      // Try to extract structured name/role pairs from the page
-      const people = await page.evaluate(() => {
-        const results: Array<{ name: string; role: string }> = [];
-
-        // Strategy 1: look for heading + paragraph pairs
-        const headings = document.querySelectorAll("h2, h3, h4, h5, strong, b");
-        for (const h of headings) {
-          const text = (h.textContent ?? "").trim();
-          // Check if text looks like a role
-          const rolePattern =
-            /chair|vice.chair|secretary|treasurer|executive|leader|president/i;
-          if (rolePattern.test(text)) {
-            // The next sibling or parent may have names
-            const parent = h.closest("li, div, p, section, article");
-            if (parent) {
-              const allText = (parent.textContent ?? "").trim();
-              // Try to separate role from name
-              const nameText = allText.replace(text, "").trim().replace(/^[:\-–—\s]+/, "");
-              if (nameText && nameText.length < 120) {
-                results.push({ role: text, name: nameText.split("\n")[0].trim() });
-              }
-            }
-          }
-        }
-
-        // Strategy 2: look for list items with role-like text
-        if (results.length === 0) {
-          const items = document.querySelectorAll("li, .team-member, .member, .officer");
-          for (const item of items) {
-            const text = (item.textContent ?? "").trim();
-            const match = text.match(
-              /(.+?)[\s\-–—:]+\s*(county\s+chair|chair(?:person|man|woman)?|vice.chair|district\s+leader|secretary|treasurer)/i,
-            );
-            if (match) {
-              results.push({ name: match[1].trim(), role: match[2].trim() });
-            }
-            const matchReverse = text.match(
-              /(county\s+chair|chair(?:person|man|woman)?|vice.chair|district\s+leader|secretary|treasurer)[\s\-–—:]+\s*(.+)/i,
-            );
-            if (matchReverse && !match) {
-              results.push({ name: matchReverse[2].trim(), role: matchReverse[1].trim() });
-            }
-          }
-        }
-
-        return results;
-      });
-
-      for (const p of people) {
-        const role = categorizeRole(p.role);
-        orgs.push({
-          id: makeId(borough, role, p.name),
-          borough,
-          role,
-          name: p.name,
-          assemblyDistrict: null,
-          electionDistrict: null,
-          details: { rawRole: p.role, source: `${baseUrl}${path}` },
-          scrapedAt: now,
-        });
-      }
-
-      if (people.length > 0) {
-        found = true;
-        break;
-      }
-    } catch {
-      // This path failed — try next
-    }
-  }
-
-  if (!found) {
-    errors.push(`${borough}: could not find leadership page on ${baseUrl}`);
-  }
-
-  return orgs;
-}
-
-/**
- * Scrape district leaders from the site.
- *
- * District leaders are elected per Assembly District (one male, one female
- * per part).  Sites may list them on a dedicated page or embedded in the
- * leadership page.
- */
-async function scrapeDistrictLeaders(
-  page: Page,
-  baseUrl: string,
-  borough: string,
-  errors: string[],
-): Promise<PartyOrg[]> {
-  const orgs: PartyOrg[] = [];
-  const now = Date.now();
-
-  const paths = [
-    "/district-leaders",
-    "/leadership/district-leaders",
-    "/district-leader",
-    "/leaders",
-    "/about/district-leaders",
-  ];
-
-  for (const path of paths) {
-    try {
-      const resp = await page.goto(`${baseUrl}${path}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      if (!resp || resp.status() >= 400) continue;
-
-      await page.waitForTimeout(2_000);
-
-      const leaders = await page.evaluate(() => {
-        const results: Array<{ name: string; ad: number | null; gender: string | null }> = [];
-
-        // Look for tabular data first
-        const tables = document.querySelectorAll("table");
-        for (const table of tables) {
-          const rows = table.querySelectorAll("tr");
-          for (const row of rows) {
-            const cells = row.querySelectorAll("td, th");
-            const texts = Array.from(cells).map((c) => (c.textContent ?? "").trim());
-            const joined = texts.join(" ");
-
-            // Try to find AD number
-            const adMatch = joined.match(/(?:AD|Assembly\s*District)\s*(\d{1,3})/i);
-            const ad = adMatch ? parseInt(adMatch[1], 10) : null;
-
-            // Names are typically in cells — look for non-numeric, non-header cells
-            for (const text of texts) {
-              if (
-                text.length > 2 &&
-                text.length < 80 &&
-                !/^(AD|Assembly|District|Name|Male|Female|Part|Leader|\d+)$/i.test(text) &&
-                !/^\d+$/.test(text)
-              ) {
-                const genderMatch = joined.match(/\b(male|female)\b/i);
-                results.push({
-                  name: text,
-                  ad,
-                  gender: genderMatch ? genderMatch[1].toLowerCase() : null,
-                });
-              }
-            }
-          }
-        }
-
-        // Fallback: list items
-        if (results.length === 0) {
-          const items = document.querySelectorAll("li, .district-leader, .leader");
-          for (const item of items) {
-            const text = (item.textContent ?? "").trim();
-            const adMatch = text.match(/(?:AD|Assembly\s*District)\s*(\d{1,3})/i);
-            const nameMatch = text.match(
-              /(?:AD\s*\d+\s*[-–:]\s*)(.+)|(.+?)(?:\s*[-–:]\s*AD\s*\d+)/i,
-            );
-            if (nameMatch) {
-              results.push({
-                name: (nameMatch[1] || nameMatch[2]).trim(),
-                ad: adMatch ? parseInt(adMatch[1], 10) : null,
-                gender: null,
-              });
-            }
-          }
-        }
-
-        return results;
-      });
-
-      for (const dl of leaders) {
-        orgs.push({
-          id: makeId(borough, "district_leader", dl.name),
-          borough,
-          role: "district_leader",
-          name: dl.name,
-          assemblyDistrict: dl.ad,
-          electionDistrict: null,
-          details: {
-            gender: dl.gender,
-            source: `${baseUrl}${path}`,
-          },
-          scrapedAt: now,
-        });
-      }
-
-      if (leaders.length > 0) break;
-    } catch {
-      // Try next path
-    }
-  }
-
-  if (orgs.length === 0) {
-    errors.push(`${borough}: could not find district leaders on ${baseUrl}`);
-  }
-
-  return orgs;
-}
-
-/**
- * Scrape county committee members where available.
- *
- * Most borough sites do not publish full county committee rosters online,
- * so this is best-effort.
- */
-async function scrapeCountyCommittee(
-  page: Page,
-  baseUrl: string,
-  borough: string,
-  errors: string[],
-): Promise<PartyOrg[]> {
-  const orgs: PartyOrg[] = [];
-  const now = Date.now();
-
-  const paths = [
-    "/county-committee",
-    "/county-committee-members",
-    "/committee-members",
-    "/members",
-  ];
-
-  for (const path of paths) {
-    try {
-      const resp = await page.goto(`${baseUrl}${path}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      if (!resp || resp.status() >= 400) continue;
-
-      await page.waitForTimeout(2_000);
-
-      const members = await page.evaluate(() => {
-        const results: Array<{ name: string; ad: number | null; ed: number | null }> = [];
-
-        const tables = document.querySelectorAll("table");
-        for (const table of tables) {
-          const rows = table.querySelectorAll("tr");
-          for (const row of rows) {
-            const cells = row.querySelectorAll("td");
-            const texts = Array.from(cells).map((c) => (c.textContent ?? "").trim());
-            if (texts.length < 1) continue;
-
-            const joined = texts.join(" ");
-            const adMatch = joined.match(/(?:AD|Assembly)\s*(\d{1,3})/i);
-            const edMatch = joined.match(/(?:ED|Election\s*District)\s*(\d{1,3})/i);
-
-            // Heuristic: the longest non-numeric cell is likely the name
-            const nameCandidates = texts.filter(
-              (t) => t.length > 2 && !/^\d+$/.test(t) && !/^(AD|ED|Name)/i.test(t),
-            );
-            const name = nameCandidates.sort((a, b) => b.length - a.length)[0];
-            if (name) {
-              results.push({
-                name,
-                ad: adMatch ? parseInt(adMatch[1], 10) : null,
-                ed: edMatch ? parseInt(edMatch[1], 10) : null,
-              });
-            }
-          }
-        }
-
-        return results;
-      });
-
-      for (const m of members) {
-        orgs.push({
-          id: makeId(borough, "county_committee", m.name),
-          borough,
-          role: "county_committee",
-          name: m.name,
-          assemblyDistrict: m.ad,
-          electionDistrict: m.ed,
-          details: { source: `${baseUrl}${path}` },
-          scrapedAt: now,
-        });
-      }
-
-      if (members.length > 0) break;
-    } catch {
-      // Try next path
-    }
-  }
-
-  // Not all boroughs publish county committee online — this is just a warning
-  if (orgs.length === 0) {
-    errors.push(`${borough}: county committee data not found on ${baseUrl}`);
-  }
-
-  return orgs;
-}
-
-/**
- * Scrape events / upcoming meetings from the site.
- */
-async function scrapeEvents(
-  page: Page,
-  baseUrl: string,
-  borough: string,
-  errors: string[],
-): Promise<Array<{ date: string; description: string; location?: string }>> {
-  const events: Array<{ date: string; description: string; location?: string }> = [];
-
-  const paths = ["/events", "/calendar", "/meetings", "/upcoming-events", "/news-events", "/"];
-
-  for (const path of paths) {
-    try {
-      const resp = await page.goto(`${baseUrl}${path}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      if (!resp || resp.status() >= 400) continue;
-
-      await page.waitForTimeout(2_000);
-
-      const scraped = await page.evaluate(() => {
-        const results: Array<{ date: string; description: string; location?: string }> = [];
-
-        // Common event selectors (WordPress, Squarespace, custom sites)
-        const eventSelectors = [
-          ".event",
-          ".tribe-events-calendar .tribe-event-url",
-          ".eventlist-event",
-          "[class*='event']",
-          "article",
-          ".post",
-        ];
-
-        for (const sel of eventSelectors) {
-          const elems = document.querySelectorAll(sel);
-          for (const elem of elems) {
-            const text = (elem.textContent ?? "").trim();
-            // Try to find a date pattern
-            const dateMatch = text.match(
-              /(\d{1,2}\/\d{1,2}\/\d{2,4})|(\w+\s+\d{1,2},?\s+\d{4})|(\d{4}-\d{2}-\d{2})/,
-            );
-            if (!dateMatch) continue;
-
-            const title =
-              elem.querySelector("h1, h2, h3, h4, .event-title, .summary, a")?.textContent?.trim() ??
-              text.slice(0, 120);
-            const location =
-              elem.querySelector(".event-location, .location, address")?.textContent?.trim();
-
-            results.push({
-              date: dateMatch[0],
-              description: title,
-              ...(location ? { location } : {}),
-            });
-          }
-          if (results.length > 0) break;
-        }
-
-        return results;
-      });
-
-      events.push(...scraped);
-      if (scraped.length > 0) break;
-    } catch {
-      // Try next path
-    }
-  }
-
-  if (events.length === 0) {
-    errors.push(`${borough}: no events found on ${baseUrl}`);
-  }
-
-  return events;
-}
-
-/**
- * Scrape volunteer / get-involved links from the site.
- */
-async function scrapeInvolveLinks(
-  page: Page,
-  baseUrl: string,
-  borough: string,
-  errors: string[],
-): Promise<string[]> {
-  const links: string[] = [];
-
-  const paths = ["/get-involved", "/volunteer", "/join", "/clubs", "/democratic-clubs", "/"];
-
-  for (const path of paths) {
-    try {
-      const resp = await page.goto(`${baseUrl}${path}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      if (!resp || resp.status() >= 400) continue;
-
-      await page.waitForTimeout(1_500);
-
-      const found = await page.evaluate((base: string) => {
-        const results: string[] = [];
-        const anchors = document.querySelectorAll("a[href]");
-        for (const a of anchors) {
-          const href = a.getAttribute("href") ?? "";
-          const text = (a.textContent ?? "").toLowerCase();
-          if (
-            /volunteer|get.involved|join|sign.up|club|become.a.member|action/i.test(text) ||
-            /volunteer|get-involved|join|signup|clubs/i.test(href)
-          ) {
-            let url = href;
-            if (url.startsWith("/")) url = `${base}${url}`;
-            if (url.startsWith("http")) results.push(url);
-          }
-        }
-        return [...new Set(results)];
-      }, baseUrl);
-
-      links.push(...found);
-      if (found.length > 0) break;
-    } catch {
-      // Try next path
-    }
-  }
-
-  if (links.length === 0) {
-    errors.push(`${borough}: no involvement links found on ${baseUrl}`);
-  }
-
-  return links;
-}
-
-// ---------------------------------------------------------------------------
-// Role categorization
-// ---------------------------------------------------------------------------
 
 function categorizeRole(raw: string): PartyOrg["role"] {
   const lower = raw.toLowerCase();
@@ -541,14 +99,277 @@ function categorizeRole(raw: string): PartyOrg["role"] {
 }
 
 // ---------------------------------------------------------------------------
+// Wikipedia scraper
+// ---------------------------------------------------------------------------
+
+async function scrapeWikipediaLeadership(
+  pageTitle: string,
+  borough: string,
+): Promise<{ orgs: PartyOrg[]; errors: string[] }> {
+  const orgs: PartyOrg[] = [];
+  const errors: string[] = [];
+  const now = Date.now();
+
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=wikitext&format=json`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
+    if (!res.ok) {
+      errors.push(`Wikipedia API ${res.status} for ${pageTitle}`);
+      return { orgs, errors };
+    }
+
+    const data = await res.json() as any;
+    const wikitext: string = data?.parse?.wikitext?.["*"] ?? "";
+    if (!wikitext) {
+      errors.push(`No wikitext found for ${pageTitle}`);
+      return { orgs, errors };
+    }
+
+    // Extract infobox fields
+    const infoboxFields: Record<string, string> = {};
+    const fieldPattern = /\|\s*(\w+)\s*=\s*([^\n|{}]+)/g;
+    let match;
+    while ((match = fieldPattern.exec(wikitext)) !== null) {
+      infoboxFields[match[1].toLowerCase()] = match[2].trim();
+    }
+
+    // Extract chairperson
+    const chairRaw = infoboxFields.chairperson || infoboxFields.chairman || infoboxFields.chair || "";
+    if (chairRaw) {
+      // Remove wikilinks: [[Name]] or [[Name|Display]]
+      const chairName = chairRaw.replace(/\[\[([^\]|]+)\|?[^\]]*\]\]/g, "$1").replace(/\[|\]/g, "").trim();
+      if (chairName) {
+        orgs.push({
+          id: makeId(borough, "chair", chairName),
+          borough,
+          role: "chair",
+          name: chairName,
+          assemblyDistrict: null,
+          electionDistrict: null,
+          details: { source: `Wikipedia: ${pageTitle}` },
+          scrapedAt: now,
+        });
+      }
+    }
+
+    // Extract other leaders from infobox
+    for (let i = 1; i <= 5; i++) {
+      const title = infoboxFields[`leader${i}_title`];
+      const name = infoboxFields[`leader${i}_name`];
+      if (title && name) {
+        const cleanName = name.replace(/\[\[([^\]|]+)\|?[^\]]*\]\]/g, "$1").replace(/\[|\]/g, "").trim();
+        const role = categorizeRole(title);
+        if (cleanName) {
+          orgs.push({
+            id: makeId(borough, role, cleanName),
+            borough,
+            role,
+            name: cleanName,
+            assemblyDistrict: null,
+            electionDistrict: null,
+            details: { rawRole: title, source: `Wikipedia: ${pageTitle}` },
+            scrapedAt: now,
+          });
+        }
+      }
+    }
+
+    // Extract website from infobox
+    const website = infoboxFields.website;
+    if (website) {
+      // Store as details on the chair org (if exists)
+      const chairOrg = orgs.find(o => o.role === "chair");
+      if (chairOrg) {
+        chairOrg.details = { ...chairOrg.details, website };
+      }
+    }
+  } catch (e) {
+    errors.push(`Wikipedia scrape failed for ${borough}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  return { orgs, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Website scraper (fetch-based, best effort)
+// ---------------------------------------------------------------------------
+
+async function scrapeWebsite(
+  baseUrl: string,
+  borough: string,
+): Promise<{
+  events: Array<{ date: string; description: string; location?: string }>;
+  involveLinks: string[];
+  errors: string[];
+}> {
+  const events: Array<{ date: string; description: string; location?: string }> = [];
+  const involveLinks: string[] = [];
+  const errors: string[] = [];
+
+  // Try fetching the homepage
+  let html = "";
+  try {
+    const res = await fetch(baseUrl, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      redirect: "follow",
+    });
+    if (!res.ok) {
+      errors.push(`${borough}: ${baseUrl} returned ${res.status}`);
+      return { events, involveLinks, errors };
+    }
+    html = await res.text();
+  } catch (e) {
+    errors.push(`${borough}: ${baseUrl} unreachable — ${e instanceof Error ? e.message : String(e)}`);
+    return { events, involveLinks, errors };
+  }
+
+  // Extract events (dates + surrounding text)
+  const datePattern = /(\d{1,2}\/\d{1,2}\/\d{2,4})|(\w+\s+\d{1,2},?\s+\d{4})|(\d{4}-\d{2}-\d{2})/g;
+  let dateMatch;
+  while ((dateMatch = datePattern.exec(html)) !== null) {
+    const date = dateMatch[0];
+    // Get surrounding context (100 chars around the date)
+    const start = Math.max(0, dateMatch.index - 100);
+    const end = Math.min(html.length, dateMatch.index + date.length + 200);
+    const context = html.slice(start, end).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (context.length > 10) {
+      events.push({ date, description: context.slice(0, 200) });
+    }
+  }
+
+  // Extract get-involved links
+  const linkPattern = /<a\s+[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let linkMatch;
+  while ((linkMatch = linkPattern.exec(html)) !== null) {
+    const href = linkMatch[1];
+    const text = linkMatch[2].replace(/<[^>]+>/g, "").trim().toLowerCase();
+    if (/volunteer|get.involved|join|sign.up|club|become.a.member|action/i.test(text) ||
+        /volunteer|get-involved|join|signup|clubs/i.test(href)) {
+      let url = href;
+      if (url.startsWith("/")) url = `${baseUrl}${url}`;
+      if (url.startsWith("http")) involveLinks.push(url);
+    }
+  }
+
+  return { events, involveLinks: [...new Set(involveLinks)], errors };
+}
+
+// ---------------------------------------------------------------------------
+// Leadership page scraper (fetch-based)
+// ---------------------------------------------------------------------------
+
+async function scrapeLeadershipPage(
+  baseUrl: string,
+  borough: string,
+): Promise<{ orgs: PartyOrg[]; errors: string[] }> {
+  const orgs: PartyOrg[] = [];
+  const errors: string[] = [];
+  const now = Date.now();
+
+  const paths = ["/leadership", "/officers", "/about", "/about-us", "/our-leadership"];
+
+  for (const path of paths) {
+    try {
+      const res = await fetch(`${baseUrl}${path}`, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+        redirect: "follow",
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+
+      // Look for name/role pairs
+      // Strategy 1: headings with role names followed by names
+      const rolePattern = /(?:chair|vice.chair|secretary|treasurer|executive|leader|president)/i;
+      const headingPattern = /<(?:h[2-5]|strong|b)[^>]*>([\s\S]*?)<\/(?:h[2-5]|strong|b)>/gi;
+      let headingMatch;
+      while ((headingMatch = headingPattern.exec(html)) !== null) {
+        const headingText = headingMatch[1].replace(/<[^>]+>/g, "").trim();
+        if (rolePattern.test(headingText)) {
+          // Look for a name in the next 500 chars
+          const after = html.slice(headingMatch.index + headingMatch[0].length, headingMatch.index + headingMatch[0].length + 500);
+          const nameText = after.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          const name = nameText.split(/[,\n]/)[0]?.trim();
+          if (name && name.length > 2 && name.length < 80) {
+            const role = categorizeRole(headingText);
+            orgs.push({
+              id: makeId(borough, role, name),
+              borough,
+              role,
+              name,
+              assemblyDistrict: null,
+              electionDistrict: null,
+              details: { rawRole: headingText, source: `${baseUrl}${path}` },
+              scrapedAt: now,
+            });
+          }
+        }
+      }
+
+      // Strategy 2: list items with "Name — Role" or "Role: Name" pattern
+      if (orgs.length === 0) {
+        const liPattern = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+        let liMatch;
+        while ((liMatch = liPattern.exec(html)) !== null) {
+          const text = liMatch[1].replace(/<[^>]+>/g, "").trim();
+          const roleNameMatch = text.match(
+            /(.+?)[\s\-–—:]+\s*(county\s+chair|chair(?:person|man|woman)?|vice.chair|district\s+leader|secretary|treasurer)/i,
+          );
+          if (roleNameMatch) {
+            const role = categorizeRole(roleNameMatch[2]);
+            orgs.push({
+              id: makeId(borough, role, roleNameMatch[1].trim()),
+              borough,
+              role,
+              name: roleNameMatch[1].trim(),
+              assemblyDistrict: null,
+              electionDistrict: null,
+              details: { rawRole: roleNameMatch[2], source: `${baseUrl}${path}` },
+              scrapedAt: now,
+            });
+          }
+          const nameRoleMatch = text.match(
+            /(county\s+chair|chair(?:person|man|woman)?|vice.chair|district\s+leader|secretary|treasurer)[\s\-–—:]+\s*(.+)/i,
+          );
+          if (nameRoleMatch && !roleNameMatch) {
+            const role = categorizeRole(nameRoleMatch[1]);
+            orgs.push({
+              id: makeId(borough, role, nameRoleMatch[2].trim()),
+              borough,
+              role,
+              name: nameRoleMatch[2].trim(),
+              assemblyDistrict: null,
+              electionDistrict: null,
+              details: { rawRole: nameRoleMatch[1], source: `${baseUrl}${path}` },
+              scrapedAt: now,
+            });
+          }
+        }
+      }
+
+      if (orgs.length > 0) break;
+    } catch {
+      // This path failed — try next
+    }
+  }
+
+  if (orgs.length === 0) {
+    errors.push(`${borough}: could not find leadership on ${baseUrl}`);
+  }
+
+  return { orgs, errors };
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Scrape all Democratic Party data for a single borough.
+ * Scrape Democratic Party data for a single borough.
  *
- * Launches a headless browser, tries each section independently, and
- * returns partial results if some sections fail.
+ * Combines data from: Wikipedia (leadership), website (events, involvement),
+ * and known-leaders fallback.
  */
 export async function scrapeBoroughParty(borough: string): Promise<{
   orgs: PartyOrg[];
@@ -570,66 +391,47 @@ export async function scrapeBoroughParty(borough: string): Promise<{
 
   const orgs: PartyOrg[] = [];
   const errors: string[] = [];
+  const now = Date.now();
+
+  // 1. Try Wikipedia if available
+  if (site.wikipedia) {
+    const wiki = await scrapeWikipediaLeadership(site.wikipedia, key);
+    orgs.push(...wiki.orgs);
+    errors.push(...wiki.errors);
+  }
+
+  // 2. Try website for leadership (if Wikipedia didn't find anything)
+  if (orgs.length === 0) {
+    const web = await scrapeLeadershipPage(site.url, key);
+    orgs.push(...web.orgs);
+    errors.push(...web.errors);
+  }
+
+  // 3. Fill in from known leaders if we still have no data
+  if (orgs.length === 0 && KNOWN_LEADERS[key]) {
+    for (const leader of KNOWN_LEADERS[key]) {
+      orgs.push({
+        id: makeId(key, leader.role, leader.name),
+        borough: key,
+        role: leader.role,
+        name: leader.name,
+        assemblyDistrict: null,
+        electionDistrict: null,
+        details: { ...leader.details, source: "known-leaders-dataset" },
+        scrapedAt: now,
+      });
+    }
+  }
+
+  // 4. Try website for events and involvement links
   let events: Array<{ date: string; description: string; location?: string }> = [];
   let involveLinks: string[] = [];
-
-  let browser: Browser | undefined;
-
-  try {
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    });
-    const page = await context.newPage();
-
-    // 1. Leadership
-    try {
-      const leadership = await scrapeLeadership(page, site.url, key, errors);
-      orgs.push(...leadership);
-    } catch (e) {
-      errors.push(`${key}: leadership scrape failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // 2. District Leaders
-    try {
-      const districtLeaders = await scrapeDistrictLeaders(page, site.url, key, errors);
-      orgs.push(...districtLeaders);
-    } catch (e) {
-      errors.push(`${key}: district leaders scrape failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // 3. County Committee
-    try {
-      const cc = await scrapeCountyCommittee(page, site.url, key, errors);
-      orgs.push(...cc);
-    } catch (e) {
-      errors.push(`${key}: county committee scrape failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // 4. Events
-    try {
-      events = await scrapeEvents(page, site.url, key, errors);
-    } catch (e) {
-      errors.push(`${key}: events scrape failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // 5. Get Involved links
-    try {
-      involveLinks = await scrapeInvolveLinks(page, site.url, key, errors);
-    } catch (e) {
-      errors.push(`${key}: involve links scrape failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-  } catch (e) {
-    errors.push(`${key}: browser launch failed — ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch {
-        // ignore close errors
-      }
-    }
+  const webData = await scrapeWebsite(site.url, key);
+  events = webData.events;
+  involveLinks = webData.involveLinks;
+  // Website errors are non-critical (many sites are down)
+  if (webData.errors.length > 0 && orgs.length === 0) {
+    errors.push(...webData.errors);
   }
 
   return { orgs, events, involveLinks, errors };
@@ -637,9 +439,6 @@ export async function scrapeBoroughParty(borough: string): Promise<{
 
 /**
  * Scrape all 5 NYC borough Democratic Party organizations.
- *
- * Each borough is scraped independently — a failure in one does not
- * block the others.
  */
 export async function scrapeAllBoroughParties(): Promise<{
   orgs: PartyOrg[];
@@ -650,7 +449,6 @@ export async function scrapeAllBoroughParties(): Promise<{
 
   const boroughs = Object.keys(BOROUGH_SITES);
 
-  // Scrape sequentially to avoid overwhelming sites / running too many browsers
   for (const borough of boroughs) {
     try {
       const result = await scrapeBoroughParty(borough);
@@ -667,11 +465,7 @@ export async function scrapeAllBoroughParties(): Promise<{
 }
 
 /**
- * Get party information relevant to a specific assembly district (and
- * optionally election district) within a borough.
- *
- * Returns the borough-level leadership plus any district leaders and
- * county committee members matching the given district(s).
+ * Get party information relevant to a specific assembly district within a borough.
  */
 export async function getPartyForDistrict(
   borough: string,
@@ -702,12 +496,10 @@ export async function getPartyForDistrict(
       (o.assemblyDistrict === assemblyDistrict || o.assemblyDistrict === null),
   );
 
-  // Further filter by election district if provided
   if (electionDistrict != null) {
     const edFiltered = countyCommittee.filter(
       (o) => o.electionDistrict === electionDistrict || o.electionDistrict === null,
     );
-    // Only narrow if we actually have ED-level data
     if (edFiltered.length > 0) {
       countyCommittee = edFiltered;
     }

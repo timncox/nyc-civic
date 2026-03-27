@@ -7,6 +7,7 @@ interface Vote {
   id: string;
   billId: string;
   repId: string;
+  repName?: string;
   vote: string;
   date: string;
 }
@@ -167,7 +168,9 @@ export function VotesTab({ app, districts }: VotesTabProps) {
         </div>
       )}
 
-      {!loading && votes.length > 0 && (
+      {!loading && votes.length > 0 && (() => {
+        const hasMultipleReps = new Set(votes.map(v => v.repId)).size > 1;
+        return (
         <div
           style={{
             background: colors.card,
@@ -185,6 +188,7 @@ export function VotesTab({ app, districts }: VotesTabProps) {
           >
             <thead>
               <tr>
+                {hasMultipleReps && <th style={{ ...thStyle, width: 140 }}>Rep</th>}
                 <th style={thStyle}>Bill</th>
                 <th style={{ ...thStyle, textAlign: "center", width: 80 }}>Vote</th>
                 <th style={{ ...thStyle, textAlign: "right", width: 100 }}>Date</th>
@@ -193,6 +197,11 @@ export function VotesTab({ app, districts }: VotesTabProps) {
             <tbody>
               {votes.map((v) => (
                 <tr key={v.id}>
+                  {hasMultipleReps && (
+                    <td style={{ ...tdStyle, color: colors.muted, fontSize: 12 }}>
+                      {v.repName || v.repId}
+                    </td>
+                  )}
                   <td style={tdStyle}>{v.billId}</td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>{voteBadge(v.vote)}</td>
                   <td style={{ ...tdStyle, textAlign: "right", color: colors.muted }}>{v.date}</td>
@@ -201,7 +210,8 @@ export function VotesTab({ app, districts }: VotesTabProps) {
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

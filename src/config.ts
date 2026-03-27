@@ -15,6 +15,7 @@ export interface SavedAddress {
 export interface Config {
   saved_addresses: SavedAddress[];
   congress_api_key: string | null;
+  legistar_token: string | null;
   ttl_overrides: Record<string, number>;
   geoclient_key: string | null;
 }
@@ -22,6 +23,7 @@ export interface Config {
 const DEFAULT_CONFIG: Config = {
   saved_addresses: [],
   congress_api_key: null,
+  legistar_token: null,
   ttl_overrides: {},
   geoclient_key: null,
 };
@@ -39,6 +41,10 @@ export function saveConfig(config: Config): void {
 
 export function getCongressApiKey(): string {
   return process.env.NYC_CIVIC_CONGRESS_API_KEY || loadConfig().congress_api_key || "DEMO_KEY";
+}
+
+export function getLegistarToken(): string | null {
+  return process.env.NYC_CIVIC_LEGISTAR_TOKEN || loadConfig().legistar_token || null;
 }
 
 export function getGeoClientKey(): string | null {

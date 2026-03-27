@@ -245,20 +245,249 @@ export async function getBillDetails(
   return { ...bill, votes };
 }
 
+// ---------------------------------------------------------------------------
+// Senate vote XML parser (senate.gov)
+// ---------------------------------------------------------------------------
+
+const SENATE_VOTE_XML_BASE = "https://www.senate.gov/legislative/LIS/roll_call_votes";
+
 /**
- * Get a member's voting record.
+ * Find the latest senate vote number by binary search.
+ */
+async function findLatestSenateVote(congress: number, session: number): Promise<number> {
+  let lo = 1, hi = 600;
+  // Quick probe to find a working upper bound
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    const num = String(mid).padStart(5, "0");
+    try {
+      const res = await fetch(
+        `${SENATE_VOTE_XML_BASE}/vote${congress}${session}/vote_${congress}_${session}_${num}.xml`,
+        { method: "HEAD", signal: AbortSignal.timeout(5_000) },
+      );
+      const text = res.ok ? await (await fetch(
+        `${SENATE_VOTE_XML_BASE}/vote${congress}${session}/vote_${congress}_${session}_${num}.xml`,
+        { signal: AbortSignal.timeout(5_000) },
+      )).text() : "";
+      if (res.ok && text.includes("<roll_call_vote>")) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    } catch {
+      hi = mid - 1;
+    }
+  }
+  return lo;
+}
+
+/**
+ * Get recent Senate votes for a member from senate.gov XML files.
+ *
+ * Senate publishes per-vote XML at:
+ * senate.gov/legislative/LIS/roll_call_votes/vote{congress}{session}/vote_{congress}_{session}_{NNNNN}.xml
+ *
+ * Each file contains all 100 senators' votes. We match by lis_member_id
+ * or by state + last name.
+ */
+async function getSenateVotesFromXml(
+  bioguideId: string,
+  limit: number,
+): Promise<Vote[]> {
+  const votes: Vote[] = [];
+  const congress = 119;
+  const session = 1;
+
+  // Get member info to find their name for matching
+  let lastName = "";
+  let state = "NY";
+  try {
+    const memberBody = (await congressFetch(`/member/${encodeURIComponent(bioguideId)}`)) as any;
+    const m = memberBody.member ?? memberBody;
+    lastName = (m.lastName ?? m.name?.split(",")[0] ?? "").trim();
+    state = (m.state ?? "New York").toUpperCase();
+    if (state === "NEW YORK") state = "NY";
+  } catch { /* will match by bioguideId pattern */ }
+
+  // Start from a recent vote and work backwards.
+  // Binary-style probe: start high and quickly find the latest valid vote.
+  let latestVote = 0;
+  for (const probe of [400, 200, 100, 50, 20, 10]) {
+    const num = String(probe).padStart(5, "0");
+    const xmlUrl = `${SENATE_VOTE_XML_BASE}/vote${congress}${session}/vote_${congress}_${session}_${num}.xml`;
+    try {
+      const res = await fetch(xmlUrl, { signal: AbortSignal.timeout(5_000) });
+      if (res.ok) {
+        const snippet = await res.text();
+        if (snippet.includes("<roll_call_vote>")) {
+          latestVote = probe;
+          break; // Found a valid one, start from here
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  if (latestVote === 0) return votes;
+
+  // Fetch recent votes working backwards from the latest
+  for (let voteNum = latestVote; voteNum > 0 && votes.length < limit; voteNum--) {
+    const num = String(voteNum).padStart(5, "0");
+    const xmlUrl = `${SENATE_VOTE_XML_BASE}/vote${congress}${session}/vote_${congress}_${session}_${num}.xml`;
+
+    try {
+      const res = await fetch(xmlUrl, { signal: AbortSignal.timeout(8_000) });
+      if (!res.ok) continue;
+      const xml = await res.text();
+      if (!xml.includes("<roll_call_vote>")) continue;
+
+      // Find this senator's vote — match by last name + state
+      const memberPattern = lastName
+        ? new RegExp(
+            `<member>\\s*` +
+            `<member_full>[^<]*</member_full>\\s*` +
+            `<last_name>${lastName}</last_name>\\s*` +
+            `<first_name>[^<]*</first_name>\\s*` +
+            `<party>[^<]*</party>\\s*` +
+            `<state>${state}</state>\\s*` +
+            `<vote_cast>([^<]+)</vote_cast>`,
+            "i",
+          )
+        : null;
+
+      const match = memberPattern?.exec(xml);
+      if (!match) continue;
+
+      const position = match[1].trim().toLowerCase();
+      let mapped: Vote["vote"] = "not_voting";
+      if (position === "yea" || position === "aye" || position === "yes") mapped = "yes";
+      else if (position === "nay" || position === "no") mapped = "no";
+      else if (position === "present") mapped = "abstain";
+      else if (position === "not voting") mapped = "absent";
+
+      // Extract bill info
+      const billType = xml.match(/<document_type>([^<]*)<\/document_type>/)?.[1]?.trim() ?? "";
+      const billNum = xml.match(/<document_number>([^<]*)<\/document_number>/)?.[1]?.trim() ?? "";
+      const question = xml.match(/<vote_question_text>([^<]*)<\/vote_question_text>/)?.[1]?.trim() ?? "";
+      const voteDate = xml.match(/<vote_date>([^<]*)<\/vote_date>/)?.[1]?.trim() ?? "";
+
+      // Parse date
+      let date = "";
+      if (voteDate) {
+        const parsed = new Date(voteDate.replace(/,\s*\d{2}:\d{2}\s*(AM|PM)$/i, ""));
+        if (!isNaN(parsed.getTime())) date = parsed.toISOString().slice(0, 10);
+      }
+
+      const billId = billType && billNum ? `${billType}${billNum}` : question.slice(0, 60);
+
+      votes.push({
+        id: `senate-roll-${voteNum}-${bioguideId}`,
+        billId: billId || `Senate Roll Call ${voteNum}`,
+        repId: bioguideId,
+        vote: mapped,
+        date,
+        scrapedAt: Date.now(),
+      });
+    } catch {
+      // Skip this vote
+    }
+
+    await sleep(100);
+  }
+
+  return votes;
+}
+
+/**
+ * Get a member's voting record from recent House roll call votes.
+ *
+ * The Congress.gov API does not have a per-member votes endpoint.
+ * Instead, we list recent House roll call votes, fetch the Clerk XML
+ * for each, and extract the specific member's vote.
  */
 export async function getMemberVotes(
   bioguideId: string,
   opts?: { offset?: number; limit?: number },
 ): Promise<Vote[]> {
-  const body = (await congressFetch(`/member/${encodeURIComponent(bioguideId)}/votes`, {
-    offset: String(opts?.offset ?? 0),
-    limit: String(opts?.limit ?? 20),
-  })) as any;
+  const votes: Vote[] = [];
+  const limit = opts?.limit ?? 20;
 
-  const votes = body.votes ?? [];
-  return votes.map((v: any) => mapVote(v, bioguideId));
+  // Determine chamber from member info
+  let chamber: "house" | "senate" = "house";
+  try {
+    const memberBody = (await congressFetch(`/member/${encodeURIComponent(bioguideId)}`)) as any;
+    const m = memberBody.member ?? memberBody;
+    // terms can be a direct array (detail endpoint) or {item: [...]} (list endpoint)
+    const terms = Array.isArray(m.terms) ? m.terms : (m.terms?.item ?? []);
+    const latestTerm = terms[terms.length - 1];
+    if (latestTerm?.chamber?.toLowerCase() === "senate") {
+      chamber = "senate";
+    }
+  } catch { /* default to house */ }
+
+  if (chamber === "senate") {
+    return getSenateVotesFromXml(bioguideId, limit);
+  }
+
+  // Get recent House roll call votes
+  try {
+    const body = (await congressFetch("/house-vote", {
+      congress: "119",
+      limit: String(Math.min(limit * 2, 40)), // fetch extra since member may not have voted on all
+    })) as any;
+
+    const rollCalls = body.houseRollCallVotes ?? [];
+
+    // For each roll call, fetch the Clerk XML and find this member's vote
+    for (const rc of rollCalls) {
+      if (votes.length >= limit) break;
+
+      const xmlUrl: string = rc.sourceDataURL ?? "";
+      if (!xmlUrl) continue;
+
+      try {
+        const xmlRes = await fetch(xmlUrl, { signal: AbortSignal.timeout(10_000) });
+        if (!xmlRes.ok) continue;
+        const xml = await xmlRes.text();
+
+        // Find this member's vote in the XML
+        // Format: <legislator name-id="G000599" ...>Name</legislator><vote>Yea</vote>
+        const memberPattern = new RegExp(
+          `<legislator[^>]*name-id="${bioguideId}"[^>]*>[^<]*</legislator>\\s*<vote>([^<]+)</vote>`,
+          "i",
+        );
+        const memberMatch = xml.match(memberPattern);
+        if (!memberMatch) continue;
+
+        const position = memberMatch[1].trim().toLowerCase();
+        let mapped: Vote["vote"] = "not_voting";
+        if (position === "yea" || position === "aye" || position === "yes") mapped = "yes";
+        else if (position === "nay" || position === "no") mapped = "no";
+        else if (position === "present") mapped = "abstain";
+        else if (position === "not voting") mapped = "absent";
+
+        const billId = `${rc.legislationType ?? ""}${rc.legislationNumber ?? ""}`;
+        const date = rc.startDate ? rc.startDate.slice(0, 10) : "";
+
+        votes.push({
+          id: `roll-${rc.rollCallNumber}-${bioguideId}`,
+          billId: billId || `Roll Call ${rc.rollCallNumber}`,
+          repId: bioguideId,
+          vote: mapped,
+          date,
+          scrapedAt: Date.now(),
+        });
+      } catch {
+        // Skip this roll call if XML fetch fails
+      }
+
+      // Small delay to avoid hammering clerk.house.gov
+      await sleep(200);
+    }
+  } catch {
+    // Roll call listing failed — return whatever we have
+  }
+
+  return votes;
 }
 
 /**
