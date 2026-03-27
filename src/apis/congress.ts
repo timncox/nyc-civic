@@ -34,6 +34,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Congress API returns full state name — match against both code and name */
+const STATE_NAMES: Record<string, string> = { NY: "NEW YORK", CA: "CALIFORNIA", TX: "TEXAS", FL: "FLORIDA", IL: "ILLINOIS", PA: "PENNSYLVANIA", OH: "OHIO", GA: "GEORGIA", NC: "NORTH CAROLINA", MI: "MICHIGAN", NJ: "NEW JERSEY", VA: "VIRGINIA", WA: "WASHINGTON", AZ: "ARIZONA", MA: "MASSACHUSETTS", TN: "TENNESSEE", IN: "INDIANA", MD: "MARYLAND", MN: "MINNESOTA", MO: "MISSOURI", WI: "WISCONSIN", CO: "COLORADO", AL: "ALABAMA", SC: "SOUTH CAROLINA", LA: "LOUISIANA", KY: "KENTUCKY", OR: "OREGON", OK: "OKLAHOMA", CT: "CONNECTICUT", UT: "UTAH", IA: "IOWA", NV: "NEVADA", AR: "ARKANSAS", MS: "MISSISSIPPI", KS: "KANSAS", NM: "NEW MEXICO", NE: "NEBRASKA", ID: "IDAHO", WV: "WEST VIRGINIA", HI: "HAWAII", NH: "NEW HAMPSHIRE", ME: "MAINE", RI: "RHODE ISLAND", MT: "MONTANA", DE: "DELAWARE", SD: "SOUTH DAKOTA", ND: "NORTH DAKOTA", AK: "ALASKA", VT: "VERMONT", WY: "WYOMING" };
+
+function matchesState(memberState: string, stateCode: string): boolean {
+  const upper = memberState.toUpperCase();
+  const code = stateCode.toUpperCase();
+  return upper === code || upper === (STATE_NAMES[code] || "");
+}
+
 // ---------------------------------------------------------------------------
 // Response → domain type mappers
 // ---------------------------------------------------------------------------
@@ -167,7 +176,7 @@ export async function getCongressMembers(state: string, district: number): Promi
       const terms = m.terms?.item ?? [];
       const latestTerm = terms[terms.length - 1];
       const mDistrict = latestTerm?.district;
-      return mState === stateUpper && (mDistrict === undefined || mDistrict === district);
+      return matchesState(m.state ?? "", state) && (mDistrict === undefined || mDistrict === district);
     })
     .map((m: any) => mapMember(m, levelForChamber(m.terms?.item?.[m.terms.item.length - 1]?.chamber)));
 }
@@ -270,7 +279,7 @@ export async function getNYSenators(): Promise<Rep[]> {
       const terms = m.terms?.item ?? [];
       const latestTerm = terms[terms.length - 1];
       const chamber = (latestTerm?.chamber ?? "").toLowerCase();
-      return mState === "NY" && chamber === "senate";
+      return matchesState(m.state ?? "", "NY") && chamber === "senate";
     })
     .map((m: any) => mapMember(m, "federal_senate"));
 }
