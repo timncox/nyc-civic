@@ -4,6 +4,68 @@ import { getDb, persistDb } from "./db.js";
 import { isStale } from "./cache.js";
 
 // ---------------------------------------------------------------------------
+// Election Street API (BOE data — one call gets ALL districts + ED)
+// ---------------------------------------------------------------------------
+
+const BOROUGH_CODES: Record<string, string> = {
+  manhattan: "1", bronx: "2", brooklyn: "3", queens: "4", "staten island": "5",
+};
+
+async function electionStreetLookup(address: string): Promise<DistrictInfo | null> {
+  const { street, city, state } = parseAddressParts(address);
+
+  // Extract house number and street name
+  const match = street.match(/^(\d+[\w-]*)\s+(.+)$/);
+  if (!match) return null;
+
+  const houseNumber = match[1];
+  const streetName = match[2];
+
+  // We need a zip code — try to extract from the address, or use a default
+  const zipMatch = address.match(/\b(\d{5})\b/);
+
+  const params = new URLSearchParams({
+    streetnumber: houseNumber,
+    streetname: streetName,
+    callback: "cb",
+  });
+  if (zipMatch) params.set("postalcode", zipMatch[1]);
+
+  const url = `https://electionstreet.com/api/nyc/addresses?${params}`;
+  const res = await fetch(url, {
+    headers: { Referer: "https://findmypollsite.vote.nyc/" },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) return null;
+
+  const text = await res.text();
+  // Strip JSONP wrapper: cb({...});
+  const jsonStr = text.replace(/^cb\(/, "").replace(/\);?\s*$/, "");
+  const data = JSON.parse(jsonStr);
+
+  if (!data?.searchStatus?.validAddress) return null;
+
+  const pol = data.politicalLayer || {};
+  // Community board code: borough code + 2-digit board number from the community layer
+  const communityDistrict = data.communityLayer?.communityDistrict;
+  const cd = communityDistrict
+    ? `${data.countyCode}${String(communityDistrict).padStart(2, "0")}`
+    : null;
+
+  return {
+    council: safeNum(pol.cityCouncilDistrict),
+    communityBoard: cd || null,
+    stateSenate: safeNum(pol.stateSenateDistrict),
+    stateAssembly: safeNum(pol.assemblyDistrict),
+    congressional: safeNum(pol.congressionalDistrict),
+    electionDistrict: safeNum(pol.electionDistrict),
+    borough: data.boroName || null,
+    lat: data.latitude || null,
+    lng: data.longitude || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -220,40 +282,52 @@ async function censusLookup(address: string): Promise<CensusResult> {
 export async function lookupAddress(address: string): Promise<DistrictInfo> {
   const info = emptyDistrict();
 
-  // Run GeoSearch and Census in parallel — they're independent
+  // Try Election Street API first — one call gets ALL districts including ED
+  try {
+    const esResult = await electionStreetLookup(address);
+    if (esResult) {
+      Object.assign(info, esResult);
+      // Election Street doesn't return community board — get it from PLUTO
+      if (!info.communityBoard && info.lat && info.lng) {
+        try {
+          const geo = await geoSearch(address);
+          if (geo.bbl) {
+            const pluto = await plutoLookup(geo.bbl);
+            info.communityBoard = pluto.communityBoard;
+          }
+        } catch { /* non-critical */ }
+      }
+      return info;
+    }
+  } catch {
+    // Fall through to multi-API pipeline
+  }
+
+  // Fallback: Run GeoSearch and Census in parallel
   const [geoResult, censusResult] = await Promise.allSettled([
     geoSearch(address),
     censusLookup(address),
   ]);
 
-  // Apply GeoSearch results
   if (geoResult.status === "fulfilled") {
     const geo = geoResult.value;
     info.lat = geo.lat;
     info.lng = geo.lng;
     info.borough = geo.borough;
 
-    // PLUTO requires BBL from GeoSearch
     if (geo.bbl) {
       try {
         const pluto = await plutoLookup(geo.bbl);
         info.council = pluto.council;
         info.communityBoard = pluto.communityBoard;
-      } catch {
-        // PLUTO failed — continue with what we have
-      }
+      } catch { /* continue */ }
     }
   }
 
-  // Apply Census results
-  console.error("[nyc-civic] Census result status:", censusResult.status);
   if (censusResult.status === "fulfilled") {
-    console.error("[nyc-civic] Census values:", JSON.stringify(censusResult.value));
     info.congressional = censusResult.value.congressional;
     info.stateSenate = censusResult.value.stateSenate;
     info.stateAssembly = censusResult.value.stateAssembly;
-  } else {
-    console.error("[nyc-civic] Census lookup rejected:", censusResult.reason);
   }
 
   return info;
