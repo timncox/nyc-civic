@@ -239,7 +239,7 @@ server.tool(
 server.tool(
   "sync_data",
   "Trigger a fresh data scrape",
-  { level: z.enum(["city", "state", "federal", "party", "community_board", "all"]) },
+  { level: z.enum(["city", "state", "federal", "party", "community_board", "all"]).default("all") },
   async ({ level }) => {
     const reports: any[] = [];
     if (level === "all" || level === "city") {
