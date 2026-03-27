@@ -275,6 +275,11 @@ expressApp.use(express.json());
 const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
 
 expressApp.post("/mcp", async (req, res) => {
+  // Manually set CORS headers (StreamableHTTPServerTransport may bypass Express middleware)
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   // Reuse existing session
@@ -317,6 +322,9 @@ expressApp.post("/mcp", async (req, res) => {
 });
 
 expressApp.get("/mcp", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (sessionId && sessions.has(sessionId)) {
     const { transport } = sessions.get(sessionId)!;
