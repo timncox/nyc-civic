@@ -264,7 +264,12 @@ return server;
 await getDb(); // Initialize database
 
 const expressApp = express();
-expressApp.use(cors());
+expressApp.use(cors({
+  origin: true,
+  credentials: true,
+  exposedHeaders: ["mcp-session-id"],
+  allowedHeaders: ["Content-Type", "mcp-session-id", "Accept"],
+}));
 expressApp.use(express.json());
 
 const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
