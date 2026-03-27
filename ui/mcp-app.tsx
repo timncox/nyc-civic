@@ -92,7 +92,10 @@ function Dashboard() {
       }
     };
 
-    app.connect().catch((err) => {
+    app.connect().then(() => {
+      // Request a tall display mode so the dashboard isn't cramped
+      try { app.sendSizeChanged({ width: 800, height: 700 }); } catch { /* ignore if not supported */ }
+    }).catch((err) => {
       console.error("Failed to connect MCP App:", err);
     });
   }, []);
@@ -102,6 +105,8 @@ function Dashboard() {
       setAddress(addr);
       setDistricts(d);
       setActiveTab("reps");
+      // Tell host we need more space now
+      try { app.sendSizeChanged({ width: 800, height: 800 }); } catch { /* ignore */ }
     },
     [],
   );
@@ -217,9 +222,10 @@ function Dashboard() {
 // ── Mount ──────────────────────────────────────────────────────────────
 const root = document.getElementById("root");
 if (root) {
-  // Reset any default body styles
+  // Reset any default body styles and set min-height for autoResize
   document.body.style.margin = "0";
   document.body.style.padding = "0";
   document.body.style.background = colors.bg;
+  document.documentElement.style.minHeight = "700px";
   createRoot(root).render(<Dashboard />);
 }
