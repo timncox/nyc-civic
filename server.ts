@@ -267,15 +267,57 @@ const expressApp = express();
 expressApp.use(cors());
 expressApp.use(express.json());
 
+const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+
 expressApp.post("/mcp", async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+  // Reuse existing session
+  if (sessionId && sessions.has(sessionId)) {
+    const { transport } = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  // New session
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
+    sessionIdGenerator: () => crypto.randomUUID(),
     enableJsonResponse: true,
   });
-  res.on("close", () => transport.close());
+
   const sessionServer = createServer();
+
+  transport.onclose = () => {
+    if (transport.sessionId) sessions.delete(transport.sessionId);
+  };
+
   await sessionServer.connect(transport);
+
+  if (transport.sessionId) {
+    sessions.set(transport.sessionId, { transport, server: sessionServer });
+  }
+
   await transport.handleRequest(req, res, req.body);
+});
+
+expressApp.get("/mcp", async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  if (sessionId && sessions.has(sessionId)) {
+    const { transport } = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res);
+    return;
+  }
+  res.status(400).json({ error: "No session" });
+});
+
+expressApp.delete("/mcp", async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  if (sessionId && sessions.has(sessionId)) {
+    const { transport } = sessions.get(sessionId)!;
+    transport.close();
+    sessions.delete(sessionId);
+  }
+  res.status(200).end();
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
