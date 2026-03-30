@@ -7,6 +7,7 @@ import { VotesTab } from "./components/VotesTab";
 import { BillsTab } from "./components/BillsTab";
 import { PartyTab } from "./components/PartyTab";
 import { CommunityBoardTab } from "./components/CommunityBoardTab";
+import { NeighborhoodTab } from "./components/NeighborhoodTab";
 
 // ── Types ──────────────────────────────────────────────────────────────
 export interface DistrictInfo {
@@ -47,12 +48,13 @@ export { colors };
 const fontFamily = "system-ui, -apple-system, sans-serif";
 
 // ── Tab definitions ────────────────────────────────────────────────────
-type TabId = "reps" | "votes" | "bills" | "party" | "cb";
+type TabId = "reps" | "votes" | "bills" | "hood" | "party" | "cb";
 
 const tabs: { id: TabId; label: string }[] = [
   { id: "reps", label: "Reps" },
   { id: "votes", label: "Votes" },
   { id: "bills", label: "Bills" },
+  { id: "hood", label: "Neighborhood" },
   { id: "party", label: "Party" },
   { id: "cb", label: "CB" },
 ];
@@ -210,6 +212,7 @@ function Dashboard() {
         {activeTab === "reps" && districts && <RepsTab app={app} address={address} districts={districts} />}
         {activeTab === "votes" && districts && <VotesTab app={app} districts={districts} />}
         {activeTab === "bills" && <BillsTab app={app} />}
+        {activeTab === "hood" && districts && <NeighborhoodTab app={app} districts={districts} />}
         {activeTab === "party" && districts && <PartyTab app={app} address={address} districts={districts} />}
         {activeTab === "cb" && districts && (
           <CommunityBoardTab app={app} district={districts.communityBoard} />
