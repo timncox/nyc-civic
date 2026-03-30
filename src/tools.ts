@@ -1,5 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const MMP_URL = process.env.MMP_URL || "https://mmp.chat/mcp";
+const CIVIC_BOT_URL = process.env.CIVIC_BOT_URL || "http://localhost:3002";
 import { resolveAddress } from "./geocoder.js";
 import { lookupAllReps } from "./reps-lookup.js";
 import { getCongressMembers, getNYSenators, searchBills as searchCongressBills, getBillDetails as getCongressBillDetails, getMemberVotes as getCongressMemberVotes } from "./apis/congress.js";
@@ -418,6 +421,117 @@ server.tool(
         details: data.meetings,
         errors: data.errors.length ? data.errors : undefined,
       }) }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+// ─── Chat Proxy Tools ─────────────────────────────────────────────────────────
+
+server.tool(
+  "get_district_chat",
+  "Get recent messages from a district group chat (requires MMP token)",
+  {
+    district_key: z.string(),
+    mmp_token: z.string(),
+    limit: z.number().default(20),
+  },
+  async ({ district_key, mmp_token, limit }) => {
+    try {
+      // 1. Get thread_id from the civic bot
+      const groupRes = await fetch(`${CIVIC_BOT_URL}/api/group/${encodeURIComponent(district_key)}`);
+      if (!groupRes.ok) throw new Error(`Bot API error: ${groupRes.status}`);
+      const group = await groupRes.json() as { thread_id: string; district_key: string; tier: string };
+
+      // 2. Initialize MMP session via StreamableHTTP
+      const initRes = await fetch(MMP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${mmp_token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "nyc-civic", version: "1.0.0" } } }),
+      });
+      if (!initRes.ok) throw new Error(`MMP init error: ${initRes.status}`);
+      const sessionId = initRes.headers.get("mcp-session-id");
+
+      // 3. Call mmp-thread to get messages
+      const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${mmp_token}` };
+      if (sessionId) headers["mcp-session-id"] = sessionId;
+      const threadRes = await fetch(MMP_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mmp-thread", arguments: { thread_id: group.thread_id, limit } } }),
+      });
+      if (!threadRes.ok) throw new Error(`MMP thread error: ${threadRes.status}`);
+      const threadData = await threadRes.json() as any;
+      const result = threadData.result ?? threadData;
+
+      return { content: [{ type: "text" as const, text: JSON.stringify({ district_key, thread_id: group.thread_id, tier: group.tier, messages: result }) }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "post_to_district_chat",
+  "Send a message to a district group chat",
+  {
+    district_key: z.string(),
+    message: z.string(),
+    mmp_token: z.string(),
+  },
+  async ({ district_key, message, mmp_token }) => {
+    try {
+      // 1. Get thread_id from the civic bot
+      const groupRes = await fetch(`${CIVIC_BOT_URL}/api/group/${encodeURIComponent(district_key)}`);
+      if (!groupRes.ok) throw new Error(`Bot API error: ${groupRes.status}`);
+      const group = await groupRes.json() as { thread_id: string; district_key: string; tier: string };
+
+      // 2. Initialize MMP session via StreamableHTTP
+      const initRes = await fetch(MMP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${mmp_token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "nyc-civic", version: "1.0.0" } } }),
+      });
+      if (!initRes.ok) throw new Error(`MMP init error: ${initRes.status}`);
+      const sessionId = initRes.headers.get("mcp-session-id");
+
+      // 3. Call mmp-reply to post message
+      const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${mmp_token}` };
+      if (sessionId) headers["mcp-session-id"] = sessionId;
+      const replyRes = await fetch(MMP_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mmp-reply", arguments: { thread_id: group.thread_id, message } } }),
+      });
+      if (!replyRes.ok) throw new Error(`MMP reply error: ${replyRes.status}`);
+      const replyData = await replyRes.json() as any;
+      const result = replyData.result ?? replyData;
+
+      return { content: [{ type: "text" as const, text: JSON.stringify({ sent: true, district_key, thread_id: group.thread_id, result }) }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "join_district_chat",
+  "Join your neighborhood district group chats via the @nyc-civic bot",
+  {
+    address: z.string(),
+    mmp_handle: z.string(),
+  },
+  async ({ address, mmp_handle }) => {
+    try {
+      const res = await fetch(`${CIVIC_BOT_URL}/api/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handle: mmp_handle, address }),
+      });
+      if (!res.ok) throw new Error(`Bot join error: ${res.status}`);
+      const result = await res.json();
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: e.message }], isError: true };
     }
