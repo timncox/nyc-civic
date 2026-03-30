@@ -8,11 +8,16 @@ import { loadConfig, saveConfig } from "./config.js";
 import { isStale } from "./cache.js";
 import { getCongressMembers, getNYSenators, searchBills as searchCongressBills, getBillDetails as getCongressBillDetails, getMemberVotes as getCongressMemberVotes } from "./apis/congress.js";
 import { getCommunityBoard as fetchCommunityBoard } from "./apis/socrata.js";
-import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilVotes, scrapeCouncilMemberVotes } from "./scrapers/council.js";
+import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilVotes, scrapeCouncilMemberVotes, getCouncilBill } from "./scrapers/council.js";
 import { scrapeStateSenator, searchSenateBills, scrapeSenateBillVotes, scrapeSenatorVotes } from "./scrapers/state-senate.js";
 import { scrapeAssemblyMember, searchAssemblyBills, scrapeAssemblyMemberVotes } from "./scrapers/state-assembly.js";
 import { getPartyForDistrict, scrapeAllBoroughParties } from "./scrapers/dem-party.js";
 import { lookupElectionDistrict } from "./scrapers/boe.js";
+import {
+  get311Complaints, getCrimeData, getRestaurantInspections,
+  getHousingViolations, getBuildingPermits, getBuildingComplaints,
+  getPropertyInfo, getCouncilFunding, getEvictions, getStreetTrees,
+} from "./apis/nyc-opendata.js";
 import type { DistrictInfo, Rep, Bill, Vote } from "./types.js";
 
 const server = new McpServer({
@@ -259,14 +264,10 @@ server.tool(
       const errors: string[] = [];
 
       if (level === "city") {
-        const legResult = await scrapeCouncilLegislation();
-        bill = legResult.bills.find(b => b.id === bill_id) || null;
-        if (bill) {
-          const voteResult = await scrapeCouncilVotes(bill_id);
-          bill = { ...bill, votes: voteResult.votes };
-          errors.push(...voteResult.errors);
+        const result = await getCouncilBill(bill_id);
+        if (result) {
+          bill = result;
         }
-        errors.push(...legResult.errors);
       } else if (level === "state") {
         const senateResult = await searchSenateBills(bill_id);
         bill = senateResult.bills.find(b => b.id === bill_id) || null;
@@ -538,6 +539,129 @@ server.tool(
     } catch (err: any) {
       return { content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true };
     }
+  }
+);
+
+// ─── NYC Open Data Tools ──────────────────────────────────────────────────────
+
+server.tool(
+  "get_311",
+  "Get 311 complaints near an address (noise, trash, potholes, etc.)",
+  { lat: z.number(), lng: z.number(), radius_meters: z.number().default(500), days_back: z.number().default(90), limit: z.number().default(50) },
+  async ({ lat, lng, radius_meters, days_back, limit }) => {
+    try {
+      const data = await get311Complaints(lat, lng, { radiusMeters: radius_meters, daysBack: days_back, limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ complaints: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_crime",
+  "Get recent crime incidents near an address",
+  { lat: z.number(), lng: z.number(), radius_meters: z.number().default(500), days_back: z.number().default(180), limit: z.number().default(50) },
+  async ({ lat, lng, radius_meters, days_back, limit }) => {
+    try {
+      const data = await getCrimeData(lat, lng, { radiusMeters: radius_meters, daysBack: days_back, limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ incidents: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_restaurants",
+  "Get restaurant health inspection grades near an address",
+  { lat: z.number(), lng: z.number(), radius_meters: z.number().default(300), limit: z.number().default(30) },
+  async ({ lat, lng, radius_meters, limit }) => {
+    try {
+      const data = await getRestaurantInspections(lat, lng, { radiusMeters: radius_meters, limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ restaurants: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_housing_violations",
+  "Get HPD housing code violations for a building",
+  { boro_id: z.string().describe("1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=SI"), house_number: z.string(), street_name: z.string(), limit: z.number().default(50) },
+  async ({ boro_id, house_number, street_name, limit }) => {
+    try {
+      const data = await getHousingViolations(boro_id, house_number, street_name, { limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ violations: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_building_permits",
+  "Get DOB building permits for an address",
+  { boro_code: z.string().describe("MANHATTAN, BRONX, BROOKLYN, QUEENS, or STATEN ISLAND"), house_number: z.string(), street_name: z.string(), limit: z.number().default(30) },
+  async ({ boro_code, house_number, street_name, limit }) => {
+    try {
+      const data = await getBuildingPermits(boro_code, house_number, street_name, { limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ permits: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_building_complaints",
+  "Get DOB building complaints for an address",
+  { house_number: z.string(), street_name: z.string(), limit: z.number().default(30) },
+  async ({ house_number, street_name, limit }) => {
+    try {
+      const data = await getBuildingComplaints(house_number, street_name, { limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ complaints: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_property",
+  "Get property info — zoning, owner, building details, assessed value",
+  { lat: z.number(), lng: z.number() },
+  async ({ lat, lng }) => {
+    try {
+      const data = await getPropertyInfo(lat, lng);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ properties: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_council_funding",
+  "Get City Council discretionary funding for a district",
+  { council_district: z.number(), fiscal_year: z.string().optional(), limit: z.number().default(50) },
+  async ({ council_district, fiscal_year, limit }) => {
+    try {
+      const data = await getCouncilFunding(council_district, { limit, fiscalYear: fiscal_year });
+      const total$ = data.reduce((sum, d) => sum + d.amount, 0);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ funding: data, total: data.length, totalAmount: total$ }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_evictions",
+  "Get eviction filings near an address",
+  { lat: z.number(), lng: z.number(), radius_meters: z.number().default(500), days_back: z.number().default(365), limit: z.number().default(30) },
+  async ({ lat, lng, radius_meters, days_back, limit }) => {
+    try {
+      const data = await getEvictions(lat, lng, { radiusMeters: radius_meters, daysBack: days_back, limit });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ evictions: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  "get_street_trees",
+  "Get street trees near an address",
+  { lat: z.number(), lng: z.number(), radius_meters: z.number().default(200) },
+  async ({ lat, lng, radius_meters }) => {
+    try {
+      const data = await getStreetTrees(lat, lng, { radiusMeters: radius_meters });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ trees: data, total: data.length }) }] };
+    } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; }
   }
 );
 
