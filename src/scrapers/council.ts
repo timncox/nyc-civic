@@ -14,14 +14,13 @@
  */
 
 import type { Rep, Bill, Vote } from "../types.js";
-import { getLegistarToken } from "../config.js";
+import { legistarFetch } from "../apis/legistar.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const MEMBER_DETAIL_URL = (n: number) => `https://council.nyc.gov/district-${n}/`;
-const LEGISTAR_API = "https://webapi.legistar.com/v1/nyc";
 const LEGISTAR_WEB = "https://legistar.council.nyc.gov";
 const FETCH_TIMEOUT = 15_000;
 
@@ -29,25 +28,6 @@ const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
-
-// ---------------------------------------------------------------------------
-// Legistar API helpers
-// ---------------------------------------------------------------------------
-
-async function legistarFetch(path: string, params: Record<string, string> = {}): Promise<unknown> {
-  const token = getLegistarToken();
-  if (!token) throw new Error("Legistar API token not configured — set legistar_token in ~/.nyc-civic/config.json");
-
-  const url = new URL(`${LEGISTAR_API}${path}`);
-  url.searchParams.set("token", token);
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(`$${k}`, v);
-  }
-
-  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
-  if (!res.ok) throw new Error(`Legistar API ${res.status}: ${path}`);
-  return res.json();
-}
 
 // ---------------------------------------------------------------------------
 // General helpers
@@ -152,9 +132,6 @@ async function scrapeMemberViaFetch(district: number): Promise<Rep | null> {
  * Returns bill details with legislative history and sponsors.
  */
 export async function getCouncilBill(billId: string): Promise<(Bill & { votes: Vote[]; histories: Array<{ action: string; date: string; passed: boolean | null }> }) | null> {
-  const token = getLegistarToken();
-  if (!token) return null;
-
   try {
     const matters = (await legistarFetch("/matters", {
       filter: `MatterFile eq '${billId}'`,
@@ -222,12 +199,6 @@ export async function scrapeCouncilLegislation(days: number = 90): Promise<{ bil
   const bills: Bill[] = [];
   const errors: string[] = [];
 
-  const token = getLegistarToken();
-  if (!token) {
-    errors.push("Legistar API token not configured — set legistar_token in ~/.nyc-civic/config.json");
-    return { bills, errors };
-  }
-
   try {
     const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const matters = (await legistarFetch("/matters", {
@@ -277,12 +248,6 @@ export async function scrapeCouncilLegislation(days: number = 90): Promise<{ bil
 export async function scrapeCouncilVotes(billId: string): Promise<{ votes: Vote[]; errors: string[] }> {
   const votes: Vote[] = [];
   const errors: string[] = [];
-
-  const token = getLegistarToken();
-  if (!token) {
-    errors.push("Legistar API token not configured");
-    return { votes, errors };
-  }
 
   try {
     // Find the matter by file number
@@ -343,12 +308,6 @@ export async function scrapeCouncilVotes(billId: string): Promise<{ votes: Vote[
 export async function scrapeCouncilMemberVotes(district: number): Promise<{ votes: Vote[]; errors: string[] }> {
   const votes: Vote[] = [];
   const errors: string[] = [];
-
-  const token = getLegistarToken();
-  if (!token) {
-    errors.push("Legistar API token not configured");
-    return { votes, errors };
-  }
 
   // Step 1: Get member name via fetch
   let memberName = "";
