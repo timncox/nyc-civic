@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveAddress } from "./geocoder.js";
 import { lookupAllReps } from "./reps-lookup.js";
-import { lookupElectionDistrict } from "./scrapers/boe.js";
 import { getCongressMembers, getNYSenators, searchBills as searchCongressBills, getBillDetails as getCongressBillDetails, getMemberVotes as getCongressMemberVotes } from "./apis/congress.js";
 import { getCommunityBoard as fetchCommunityBoard } from "./apis/socrata.js";
 import { scrapeCouncilMembers, scrapeCouncilLegislation, scrapeCouncilMemberVotes, getCouncilBill } from "./scrapers/council.js";

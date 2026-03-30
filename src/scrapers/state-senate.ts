@@ -11,7 +11,7 @@
  * senate activity only.
  */
 
-import type { Rep, Bill, Vote } from "../types.js";
+import type { Bill, Vote } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Bill search — fetch-based
@@ -89,20 +89,6 @@ export async function searchSenateBills(query: string): Promise<{ bills: Bill[];
 // ---------------------------------------------------------------------------
 
 /**
- * Scrape vote records for a specific senate bill.
- * Requires NY Open Legislation API key (not currently configured).
- */
-export async function scrapeSenateBillVotes(billId: string): Promise<{ votes: Vote[]; errors: string[] }> {
-  return {
-    votes: [],
-    errors: [
-      `State senate bill votes require the NY Open Legislation API key. ` +
-      `Register at https://legislation.nysenate.gov to get one.`,
-    ],
-  };
-}
-
-/**
  * Scrape votes cast by a specific state senator.
  * Requires NY Open Legislation API key (not currently configured).
  */
@@ -115,19 +101,4 @@ export async function scrapeSenatorVotes(district: number): Promise<{ votes: Vot
       `Note: Federal senate votes (Schumer/Gillibrand) are available under "Federal" level.`,
     ],
   };
-}
-
-// ---------------------------------------------------------------------------
-// Rep lookup wrapper (actual logic is in reps-lookup.ts)
-// ---------------------------------------------------------------------------
-
-import { lookupStateSenator } from "../reps-lookup.js";
-
-export async function scrapeStateSenator(district: number): Promise<{ rep: Rep | null; errors: string[] }> {
-  try {
-    const rep = await lookupStateSenator(district);
-    return { rep, errors: rep ? [] : [`Could not find senator for district ${district}`] };
-  } catch (e) {
-    return { rep: null, errors: [`Senator lookup failed: ${e instanceof Error ? e.message : String(e)}`] };
-  }
 }

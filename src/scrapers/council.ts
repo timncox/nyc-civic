@@ -235,65 +235,6 @@ export async function scrapeCouncilLegislation(days: number = 90): Promise<{ bil
 }
 
 // ---------------------------------------------------------------------------
-// scrapeCouncilVotes — Legistar API for history, Playwright for roll calls
-// ---------------------------------------------------------------------------
-
-/**
- * Get vote information for a specific bill.
- *
- * Uses the Legistar API for bill history (actions like "Approved by Council"),
- * which includes the PassedFlag. Individual roll call votes (per-member) are
- * not available via the API and would require Playwright.
- */
-export async function scrapeCouncilVotes(billId: string): Promise<{ votes: Vote[]; errors: string[] }> {
-  const votes: Vote[] = [];
-  const errors: string[] = [];
-
-  try {
-    // Find the matter by file number
-    const matters = (await legistarFetch("/matters", {
-      filter: `MatterFile eq '${billId}'`,
-    })) as any[];
-
-    if (matters.length === 0) {
-      errors.push(`Bill ${billId} not found in Legistar`);
-      return { votes, errors };
-    }
-
-    const matterId = matters[0].MatterId;
-
-    // Get the legislative history for this matter
-    const histories = (await legistarFetch(`/matters/${matterId}/histories`)) as any[];
-
-    for (const h of histories) {
-      if (h.MatterHistoryPassedFlag === 1 || h.MatterHistoryPassedFlag === 0) {
-        // This is a vote action (passed or failed)
-        const date = h.MatterHistoryActionDate ? toISODate(h.MatterHistoryActionDate) : "";
-        votes.push({
-          id: `${billId}-${h.MatterHistoryId}`,
-          billId,
-          repId: "city-council",
-          vote: h.MatterHistoryPassedFlag === 1 ? "yes" : "no",
-          date,
-          scrapedAt: Date.now(),
-        });
-      }
-    }
-
-    // Note: Individual per-member roll call votes are not available via the
-    // Legistar API for NYC. The eventitems/{id}/votes endpoint returns empty.
-    // To get per-member votes, Playwright scraping of the web interface is needed.
-    if (votes.length === 0) {
-      errors.push(`No vote records found for ${billId} — NYC Council typically uses voice votes`);
-    }
-  } catch (e) {
-    errors.push(`Vote fetch: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  return { votes, errors };
-}
-
-// ---------------------------------------------------------------------------
 // scrapeCouncilMemberVotes — Legistar API for sponsored legislation
 // ---------------------------------------------------------------------------
 

@@ -7,8 +7,7 @@
  *   Would need the NY Open Legislation API key (legislation.nysenate.gov)
  */
 
-import type { Rep, Bill, Vote } from "../types.js";
-import { lookupAssemblyMember } from "../reps-lookup.js";
+import type { Bill, Vote } from "../types.js";
 
 const BASE_URL = "https://nyassembly.gov";
 const FETCH_TIMEOUT = 15_000;
@@ -16,19 +15,6 @@ const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
   "Accept": "text/html",
 };
-
-// ---------------------------------------------------------------------------
-// Rep lookup wrapper
-// ---------------------------------------------------------------------------
-
-export async function scrapeAssemblyMember(district: number): Promise<{ rep: Rep | null; errors: string[] }> {
-  try {
-    const rep = await lookupAssemblyMember(district);
-    return { rep, errors: rep ? [] : [`Could not find assembly member for district ${district}`] };
-  } catch (e) {
-    return { rep: null, errors: [`Assembly member lookup failed: ${e instanceof Error ? e.message : String(e)}`] };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Bill search — fetch-based
