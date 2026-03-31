@@ -1,6 +1,18 @@
 # NYC Civic MCP Server
 
-MCP server for tracking NYC elected representatives, voting records, legislation, neighborhood data, and Democratic Party organization across city, state, and federal levels.
+MCP server for NYC civic data — representatives, legislation, voting records, neighborhood data, Democratic Party organization, and district group chats.
+
+**Live at [nyc.mmp.chat](https://nyc.mmp.chat)**
+
+## Connect
+
+```bash
+# Claude Code
+claude mcp add --transport http nyc-civic https://nyc.mmp.chat/mcp
+
+# Claude Desktop
+# Settings → MCP Servers → Add Remote → https://nyc.mmp.chat/mcp
+```
 
 ## What it does
 
@@ -14,12 +26,13 @@ Enter any NYC address and get:
 - **Community board** — members and contact info
 - **Council discretionary funding** — where your council member spends money
 - **District lookup** — all political districts including election district
+- **District group chats** — join neighborhood groups via @nyc_civic bot on MMP
 
 ## Architecture
 
 ```
 server.ts          → HTTP shell (Express + StreamableHTTP, MCP App UI)
-src/tools.ts       → All 19 MCP tool registrations
+src/tools.ts       → All 22 MCP tool registrations
 src/apis/
   congress.ts      → Congress.gov API + House/Senate vote XML
   legistar.ts      → Legistar OData API client (shared)
@@ -40,11 +53,14 @@ src/
   types.ts         → Shared TypeScript types
 ui/
   mcp-app.tsx      → React dashboard (bundled to single HTML via Vite)
-  components/      → Reps, Votes, Bills, Neighborhood, Party, CB tabs
+  components/      → Reps, Votes, Bills, Neighborhood, Party, CB, Chat tabs
+public/
+  index.html       → Landing page at nyc.mmp.chat
 ```
 
 **Transport**: StreamableHTTP on port 3001
-**UI**: React dashboard with 6 tabs, bundled as single HTML (MCP App)
+**Deployed**: Railway at nyc.mmp.chat
+**UI**: React dashboard with 7 tabs, bundled as single HTML (MCP App)
 **No Playwright dependency** — all scrapers use direct fetch or REST APIs
 
 ## Setup
@@ -80,7 +96,7 @@ npm start
 
 Server starts on `http://localhost:3001/mcp`.
 
-## MCP Tools (19)
+## MCP Tools (22)
 
 ### Representatives & Governance
 | Tool | Description |
@@ -113,10 +129,25 @@ Server starts on `http://localhost:3001/mcp`.
 | `get_evictions` | Eviction filings near an address |
 | `get_street_trees` | Street tree census (species, health, diameter) |
 
+### District Chat
+| Tool | Description |
+|------|-------------|
+| `join_district_chat` | Join your neighborhood district groups via @nyc_civic bot |
+| `get_district_chat` | Read messages from a district group |
+| `post_to_district_chat` | Send a message to a district group |
+
 ### Admin
 | Tool | Description |
 |------|-------------|
 | `sync_data` | Trigger a fresh data scrape |
+
+## District Chat Bot
+
+The `@nyc_civic` bot on [MMP](https://mmp.chat) creates district-scoped group chats and broadcasts civic updates.
+
+- **DM the bot** with an NYC address to join your council, assembly, and borough groups
+- **Automated broadcasts**: 311 digests (Mon), attendance (Wed), legislation (Fri)
+- **Bot service**: [nyc-civic-bot](../nyc-civic-bot/) — standalone Express app on Railway
 
 ## Data Sources
 
@@ -131,23 +162,4 @@ Server starts on `http://localhost:3001/mcp`.
 | nyassembly.gov | Assembly member profiles, bill search | None |
 | Wikipedia API | State senator info, Dem party leadership | None |
 | Election Street API | Address geocoding, all political districts | None |
-
-## Status
-
-**Working:**
-- Address lookup (all districts including election district)
-- All 6 reps for any NYC address
-- Federal votes: House + Senate (per-member roll calls)
-- City Council legislation search, bill details, sponsors, full legislative history
-- Council meeting attendance tracking with per-member rates
-- All 10 NYC Open Data neighborhood tools
-- Dem party leadership for all 5 boroughs
-- Community board info
-- Interactive dashboard with Neighborhood tab
-
-**Needs NY Open Legislation API key** (register at legislation.nysenate.gov):
-- State senate individual voting records
-- State assembly floor votes
-
-**Not available via any API:**
-- Per-member city council roll call votes (NYC doesn't populate the Legistar votes table)
+| MMP (mmp.chat) | District group chats, bot messaging | Bot token |
