@@ -105,100 +105,40 @@ expressApp.use(cors({
 }));
 expressApp.use(express.json());
 
-const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
-
-expressApp.post("/mcp", async (req, res) => {
-  // Prevent CDN (Fastly/Railway) from caching MCP responses
+// Stateless transport — every request creates a fresh server+transport.
+// No in-memory session map means no stale-session errors after Railway restarts,
+// and no CDN session-affinity issues.
+async function handleMcpRequest(req: import("express").Request, res: import("express").Response) {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.setHeader("Surrogate-Control", "no-store");
-  // CORS headers (StreamableHTTPServerTransport may bypass Express middleware)
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  console.error(`[mcp] POST /mcp sessionId=${sessionId ?? "none"} known=${sessionId ? sessions.has(sessionId) : "n/a"} sessions=${sessions.size}`);
-
-  // Reuse existing session
-  if (sessionId && sessions.has(sessionId)) {
-    const session = sessions.get(sessionId)!;
-    try {
-      await session.transport.handleRequest(req, res, req.body);
-    } catch (e) {
-      console.error("[mcp] Error handling request for session", sessionId, e);
-      if (!res.headersSent) res.status(500).json({ error: String(e) });
-    }
-    return;
-  }
-
-  // Unknown or no session — create a new one.
-  // This handles both initial connects AND stale session IDs
-  // (e.g. after Railway container restart while client holds old ID).
-  //
-  // For stale sessions: strip the old session header so the new transport
-  // doesn't reject it. The MCP SDK transport checks the header internally.
-  if (sessionId) {
-    delete req.headers["mcp-session-id"];
-  }
-
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
+    sessionIdGenerator: undefined, // stateless — no session validation
     enableJsonResponse: true,
   });
 
   const sessionServer = createServer();
-
-  transport.onclose = () => {
-    if (transport.sessionId) sessions.delete(transport.sessionId);
-  };
-
   await sessionServer.connect(transport);
 
   try {
     await transport.handleRequest(req, res, req.body);
   } catch (e) {
-    // If the client sent a non-initialize request with a stale session,
-    // the transport will reject it — tell the client to re-initialize.
     if (!res.headersSent) {
-      res.status(400).json({
+      res.status(500).json({
         jsonrpc: "2.0",
-        error: { code: -32600, message: "Session expired. Please reconnect." },
+        error: { code: -32000, message: String(e) },
         id: null,
       });
     }
-    return;
   }
+}
 
-  // Session ID is set after handleRequest processes the initialize request
-  if (transport.sessionId) {
-    sessions.set(transport.sessionId, { transport, server: sessionServer });
-  }
-});
-
-expressApp.get("/mcp", async (req, res) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.setHeader("Surrogate-Control", "no-store");
-  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  if (sessionId && sessions.has(sessionId)) {
-    const { transport } = sessions.get(sessionId)!;
-    await transport.handleRequest(req, res);
-    return;
-  }
-  res.status(400).json({ error: "No session" });
-});
-
-expressApp.delete("/mcp", async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  if (sessionId && sessions.has(sessionId)) {
-    const { transport } = sessions.get(sessionId)!;
-    transport.close();
-    sessions.delete(sessionId);
-  }
-  res.status(200).end();
-});
+expressApp.post("/mcp", handleMcpRequest);
+expressApp.get("/mcp", handleMcpRequest);
+expressApp.delete("/mcp", (_req, res) => res.status(200).end());
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 expressApp.listen(PORT, () => {
