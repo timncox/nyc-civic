@@ -108,7 +108,10 @@ expressApp.use(express.json());
 const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
 
 expressApp.post("/mcp", async (req, res) => {
-  // Manually set CORS headers (StreamableHTTPServerTransport may bypass Express middleware)
+  // Prevent CDN (Fastly/Railway) from caching MCP responses
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Surrogate-Control", "no-store");
+  // CORS headers (StreamableHTTPServerTransport may bypass Express middleware)
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
@@ -173,6 +176,8 @@ expressApp.post("/mcp", async (req, res) => {
 });
 
 expressApp.get("/mcp", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Surrogate-Control", "no-store");
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
