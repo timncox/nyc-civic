@@ -70,11 +70,10 @@ registerAppResource(
   resourceUri,
   { mimeType: RESOURCE_MIME_TYPE },
   async () => {
-    // Try test HTML first, fall back to full dashboard
-    const testPath = path.join(import.meta.dirname, "..", "public", "mcp-app-test.html");
-    const fullPath = path.join(import.meta.dirname, "..", "dist", "mcp-app.html");
-    const htmlPath = (await fs.access(testPath).then(() => true).catch(() => false)) ? testPath : fullPath;
-    const html = await fs.readFile(htmlPath, "utf-8");
+    const html = await fs.readFile(
+      path.join(import.meta.dirname, "..", "dist", "mcp-app.html"),
+      "utf-8",
+    );
     return {
       contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
     };
