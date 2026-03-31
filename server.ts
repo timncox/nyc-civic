@@ -114,6 +114,7 @@ expressApp.post("/mcp", async (req, res) => {
   res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  console.error(`[mcp] POST /mcp sessionId=${sessionId ?? "none"} known=${sessionId ? sessions.has(sessionId) : "n/a"} sessions=${sessions.size}`);
 
   // Reuse existing session
   if (sessionId && sessions.has(sessionId)) {
