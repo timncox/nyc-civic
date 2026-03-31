@@ -1,6 +1,6 @@
 {
   "name": "nyc-civic",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "MCP server for tracking NYC elected representatives, voting records, and Democratic Party organization",
   "main": "dist/server.js",
