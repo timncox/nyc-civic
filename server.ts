@@ -130,6 +130,13 @@ expressApp.post("/mcp", async (req, res) => {
   // Unknown or no session — create a new one.
   // This handles both initial connects AND stale session IDs
   // (e.g. after Railway container restart while client holds old ID).
+  //
+  // For stale sessions: strip the old session header so the new transport
+  // doesn't reject it. The MCP SDK transport checks the header internally.
+  if (sessionId) {
+    delete req.headers["mcp-session-id"];
+  }
+
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
     enableJsonResponse: true,
