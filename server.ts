@@ -70,10 +70,11 @@ registerAppResource(
   resourceUri,
   { mimeType: RESOURCE_MIME_TYPE },
   async () => {
-    const html = await fs.readFile(
-      path.join(import.meta.dirname, "..", "dist", "mcp-app.html"),
-      "utf-8",
-    );
+    // Try test HTML first, fall back to full dashboard
+    const testPath = path.join(import.meta.dirname, "..", "public", "mcp-app-test.html");
+    const fullPath = path.join(import.meta.dirname, "..", "dist", "mcp-app.html");
+    const htmlPath = (await fs.access(testPath).then(() => true).catch(() => false)) ? testPath : fullPath;
+    const html = await fs.readFile(htmlPath, "utf-8");
     return {
       contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
     };
@@ -126,13 +127,9 @@ expressApp.post("/mcp", async (req, res) => {
     return;
   }
 
-  // If session ID was provided but not found, reject
-  if (sessionId) {
-    res.status(400).json({ jsonrpc: "2.0", error: { code: -32000, message: "Unknown session" }, id: null });
-    return;
-  }
-
-  // New session (no session ID header = initial connect)
+  // Unknown or no session — create a new one.
+  // This handles both initial connects AND stale session IDs
+  // (e.g. after Railway container restart while client holds old ID).
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
     enableJsonResponse: true,
@@ -145,7 +142,21 @@ expressApp.post("/mcp", async (req, res) => {
   };
 
   await sessionServer.connect(transport);
-  await transport.handleRequest(req, res, req.body);
+
+  try {
+    await transport.handleRequest(req, res, req.body);
+  } catch (e) {
+    // If the client sent a non-initialize request with a stale session,
+    // the transport will reject it — tell the client to re-initialize.
+    if (!res.headersSent) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32600, message: "Session expired. Please reconnect." },
+        id: null,
+      });
+    }
+    return;
+  }
 
   // Session ID is set after handleRequest processes the initialize request
   if (transport.sessionId) {
