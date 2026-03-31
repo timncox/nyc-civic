@@ -71,7 +71,7 @@ registerAppResource(
   { mimeType: RESOURCE_MIME_TYPE },
   async () => {
     const html = await fs.readFile(
-      path.join(import.meta.dirname, "dist", "mcp-app.html"),
+      path.join(import.meta.dirname, "..", "dist", "mcp-app.html"),
       "utf-8",
     );
     return {
