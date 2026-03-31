@@ -92,6 +92,10 @@ return server;
 await getDb(); // Initialize database
 
 const expressApp = express();
+
+// Serve landing page
+expressApp.use(express.static(path.join(import.meta.dirname, "..", "public")));
+
 expressApp.use(cors({
   origin: true,
   credentials: true,

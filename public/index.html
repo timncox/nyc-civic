@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Civic — MCP Server for NYC Democracy</title>
+<meta name="description" content="MCP server with 22 tools for NYC civic data — representatives, legislation, votes, 311, crime, housing, and district group chats.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg: #07090F;
+    --surface: #0F1319;
+    --surface-hover: #151B24;
+    --border: #1A2030;
+    --border-bright: #243040;
+    --text: #E8E6E3;
+    --text-muted: #7A8494;
+    --text-dim: #4A5568;
+    --blue: #3B82F6;
+    --blue-dim: rgba(59, 130, 246, 0.15);
+    --green: #00E68A;
+    --green-dim: rgba(0, 230, 138, 0.15);
+    --orange: #FF6B35;
+    --orange-dim: rgba(255, 107, 53, 0.15);
+    --cyan: #38BDF8;
+    --red: #EF4444;
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'Newsreader', Georgia, serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.025) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59,130,246,0.06), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 860px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+  .container-wide { max-width: 1040px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(7, 9, 15, 0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .inner {
+    max-width: 1040px; margin: 0 auto; padding: 0 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+  }
+  nav .logo {
+    font-family: var(--font-mono);
+    font-weight: 600; font-size: 15px;
+    color: var(--blue);
+    text-decoration: none;
+    letter-spacing: -0.02em;
+  }
+  nav .links { display: flex; gap: 28px; }
+  nav .links a {
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 500;
+    color: var(--text-muted);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: color 0.2s;
+  }
+  nav .links a:hover { color: var(--text); }
+
+  section { padding: 100px 0; }
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1; height: 1px;
+    background: var(--border);
+  }
+  .section-num {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--blue);
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+  }
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 36px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 20px;
+  }
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  p.lead {
+    font-size: 19px;
+    color: var(--text-muted);
+    line-height: 1.75;
+    max-width: 580px;
+  }
+
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border-bright), transparent);
+  }
+
+  .btn {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 0.02em;
+  }
+  .btn-primary {
+    background: var(--blue);
+    color: white;
+  }
+  .btn-primary:hover {
+    background: #5B9BFF;
+    box-shadow: 0 0 30px rgba(59,130,246,0.25);
+    transform: translateY(-1px);
+  }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+  }
+  .btn-secondary:hover {
+    background: var(--surface-hover);
+    border-color: var(--text-dim);
+  }
+
+  /* — Hero — */
+  .hero { padding-top: 160px; padding-bottom: 80px; }
+  .hero-badge {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--blue);
+    background: var(--blue-dim);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(59,130,246,0.2);
+    margin-bottom: 28px;
+  }
+  .hero h1 {
+    font-size: clamp(42px, 7vw, 72px);
+    margin-bottom: 24px;
+  }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--blue);
+  }
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 40px;
+  }
+
+  /* — Connect box — */
+  .connect-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-top: 48px;
+    max-width: 560px;
+  }
+  .connect-box h3 { margin-bottom: 16px; font-size: 16px; }
+  .connect-url {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    color: var(--blue);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .connect-url:hover { border-color: var(--blue); }
+  .connect-url .copy-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .connect-steps {
+    margin-top: 16px;
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.8;
+  }
+  .connect-steps code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  /* — Tool grid — */
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 2px;
+    background: var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 40px;
+  }
+  .tool-card {
+    background: var(--surface);
+    padding: 20px;
+  }
+  .tool-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .tool-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .tool-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-top: 8px;
+  }
+  .tag-govt { background: var(--blue-dim); color: var(--blue); }
+  .tag-data { background: var(--green-dim); color: var(--green); }
+  .tag-chat { background: var(--orange-dim); color: var(--orange); }
+
+  /* — Category sections — */
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-top: 48px;
+  }
+  .cat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px 28px;
+    transition: border-color 0.3s;
+  }
+  .cat-card:hover { border-color: var(--border-bright); }
+  .cat-icon { font-size: 28px; margin-bottom: 16px; }
+  .cat-card h3 { margin-bottom: 10px; }
+  .cat-card p { font-size: 15px; color: var(--text-muted); line-height: 1.6; }
+  .cat-tools {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.8;
+  }
+
+  /* — CTA — */
+  .cta-section {
+    text-align: center;
+    padding: 100px 0 120px;
+  }
+  .cta-section h2 { font-size: 44px; margin-bottom: 16px; }
+  .cta-section p {
+    color: var(--text-muted);
+    font-size: 18px;
+    margin-bottom: 36px;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 0;
+    text-align: center;
+  }
+  footer p {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  footer a { color: var(--text-muted); text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  .fade-up {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .fade-up.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (max-width: 768px) {
+    .cat-grid { grid-template-columns: 1fr; }
+    .tool-grid { grid-template-columns: 1fr; }
+    nav .links { gap: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="inner">
+    <a href="#" class="logo">nyc.mmp.chat</a>
+    <div class="links">
+      <a href="#connect">Connect</a>
+      <a href="#tools">Tools</a>
+      <a href="#bot">Chat Bot</a>
+      <a href="https://github.com/timcox/nyc-civic">Source</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">MCP Server &middot; 22 tools</div>
+    <h1>NYC civic data<br>for <em>AI agents</em></h1>
+    <p class="lead">
+      An MCP server that gives AI assistants access to NYC democracy &mdash;
+      elected representatives, legislation, voting records, 311 complaints,
+      crime data, housing violations, and district group chats.
+    </p>
+    <div class="hero-cta">
+      <a href="#connect" class="btn btn-primary">Connect Your AI</a>
+      <a href="#tools" class="btn btn-secondary">View All Tools</a>
+    </div>
+
+    <div class="connect-box" id="connect">
+      <h3>MCP Endpoint</h3>
+      <div class="connect-url" onclick="navigator.clipboard.writeText('https://nyc.mmp.chat/mcp');this.querySelector('.copy-hint').textContent='Copied!'">
+        https://nyc.mmp.chat/mcp
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="connect-steps">
+        <strong>Claude Desktop:</strong> Settings &rarr; MCP Servers &rarr; Add Remote &rarr; paste URL<br>
+        <strong>Claude Code:</strong> <code>claude mcp add --transport http nyc-civic https://nyc.mmp.chat/mcp</code>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section>
+  <div class="container-wide">
+    <div class="section-label"><span class="section-num">1</span> What You Get</div>
+    <h2>Three pillars of<br>civic intelligence</h2>
+
+    <div class="cat-grid">
+      <div class="cat-card fade-up">
+        <div class="cat-icon">🏛️</div>
+        <h3>Government</h3>
+        <p>Representatives at every level &mdash; city council, state assembly, state senate, congressional. Voting records, attendance, legislation tracking.</p>
+        <div class="cat-tools">
+          get_reps &middot; get_votes &middot; get_attendance &middot; get_bill &middot; search_legislation &middot; get_council_funding &middot; get_dem_party
+        </div>
+      </div>
+      <div class="cat-card fade-up" style="transition-delay: 0.1s">
+        <div class="cat-icon">📊</div>
+        <h3>Neighborhood Data</h3>
+        <p>Hyperlocal datasets &mdash; 311 complaints, crime incidents, housing violations, building permits, evictions, property info, restaurants, street trees.</p>
+        <div class="cat-tools">
+          get_311 &middot; get_crime &middot; get_housing_violations &middot; get_building_permits &middot; get_building_complaints &middot; get_evictions &middot; get_property &middot; get_restaurants &middot; get_street_trees
+        </div>
+      </div>
+      <div class="cat-card fade-up" style="transition-delay: 0.2s">
+        <div class="cat-icon">💬</div>
+        <h3>District Chat</h3>
+        <p>Group chats for every NYC district via MMP. Join your council, assembly, and election district groups. Bot broadcasts civic updates automatically.</p>
+        <div class="cat-tools">
+          join_district_chat &middot; get_district_chat &middot; post_to_district_chat
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section id="tools">
+  <div class="container-wide">
+    <div class="section-label"><span class="section-num">2</span> All Tools</div>
+    <h2>22 tools, one endpoint</h2>
+    <p class="lead">Every tool resolves by NYC address. Pass an address and get structured civic data back.</p>
+
+    <div class="tool-grid">
+      <div class="tool-card"><div class="tool-name">lookup_address</div><div class="tool-desc">Resolve any NYC address to all political districts</div><span class="tool-tag tag-govt">core</span></div>
+      <div class="tool-card"><div class="tool-name">civic_dashboard</div><div class="tool-desc">Interactive dashboard with all civic data for an address</div><span class="tool-tag tag-govt">ui</span></div>
+      <div class="tool-card"><div class="tool-name">get_reps</div><div class="tool-desc">All elected officials for an address &mdash; city to federal</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_votes</div><div class="tool-desc">Council member voting records on legislation</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_attendance</div><div class="tool-desc">Council stated meeting attendance records</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_bill</div><div class="tool-desc">Detailed bill info &mdash; sponsors, status, history</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">search_legislation</div><div class="tool-desc">Search city and state legislation by keyword</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_council_funding</div><div class="tool-desc">Discretionary funding allocated by council members</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_dem_party</div><div class="tool-desc">Democratic Party organization &mdash; district leaders, committee</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_community_board</div><div class="tool-desc">Community board info, meetings, members</div><span class="tool-tag tag-govt">govt</span></div>
+      <div class="tool-card"><div class="tool-name">get_311</div><div class="tool-desc">311 complaints near an address &mdash; noise, sanitation, streets</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_crime</div><div class="tool-desc">NYPD crime incidents near an address</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_housing_violations</div><div class="tool-desc">HPD housing violations for a building</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_building_permits</div><div class="tool-desc">DOB building permits and applications</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_building_complaints</div><div class="tool-desc">DOB complaints filed against buildings</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_evictions</div><div class="tool-desc">Eviction filings in the area</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_property</div><div class="tool-desc">Property records &mdash; owner, assessed value, tax info</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_restaurants</div><div class="tool-desc">Restaurant inspection grades near an address</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">get_street_trees</div><div class="tool-desc">NYC street tree census data</div><span class="tool-tag tag-data">data</span></div>
+      <div class="tool-card"><div class="tool-name">join_district_chat</div><div class="tool-desc">Join your district group chats via @nyc_civic bot</div><span class="tool-tag tag-chat">chat</span></div>
+      <div class="tool-card"><div class="tool-name">get_district_chat</div><div class="tool-desc">Read messages from a district group</div><span class="tool-tag tag-chat">chat</span></div>
+      <div class="tool-card"><div class="tool-name">post_to_district_chat</div><div class="tool-desc">Send a message to a district group</div><span class="tool-tag tag-chat">chat</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section id="bot">
+  <div class="container">
+    <div class="section-label"><span class="section-num">3</span> District Chat Bot</div>
+    <h2>@nyc_civic on MMP</h2>
+    <p class="lead">A bot that creates district-scoped group chats and broadcasts civic updates to your neighborhood.</p>
+
+    <div class="cat-grid" style="grid-template-columns: 1fr 1fr; margin-top: 32px;">
+      <div class="cat-card fade-up">
+        <h3>How it works</h3>
+        <p>DM <strong>@nyc_civic</strong> on MMP with your NYC address. The bot resolves your districts and adds you to council, assembly, and election district group chats.</p>
+        <div class="cat-tools">
+          Commands: join &lt;address&gt; &middot; my reps &middot; my districts &middot; help
+        </div>
+      </div>
+      <div class="cat-card fade-up" style="transition-delay: 0.1s">
+        <h3>Automated broadcasts</h3>
+        <p>Weekly 311 digests, attendance reports after council meetings, and new legislation alerts &mdash; delivered directly to your district groups.</p>
+        <div class="cat-tools">
+          Mon 9am: 311 digest &middot; Wed 10am: attendance &middot; Fri 9am: legislation
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section class="cta-section">
+  <div class="container">
+    <h2>Connect now</h2>
+    <p>Add the MCP server to your AI assistant and start exploring NYC civic data.</p>
+    <div class="connect-url" style="max-width: 420px; margin: 0 auto; cursor: pointer;" onclick="navigator.clipboard.writeText('https://nyc.mmp.chat/mcp');this.querySelector('.copy-hint').textContent='Copied!'">
+      https://nyc.mmp.chat/mcp
+      <span class="copy-hint">Click to copy</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>
+      <a href="https://github.com/timcox/nyc-civic">Source</a>
+      &nbsp;&bull;&nbsp;
+      <a href="https://mmp.chat">MMP</a>
+      &nbsp;&bull;&nbsp;
+      Built for NYC
+    </p>
+  </div>
+</footer>
+
+<script>
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+  document.querySelectorAll('nav a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+</script>
+</body>
+</html>
