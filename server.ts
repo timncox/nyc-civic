@@ -185,5 +185,5 @@ expressApp.delete("/mcp", async (req, res) => {
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 expressApp.listen(PORT, () => {
-  console.log(`NYC Civic MCP v1.1.0 listening on http://localhost:${PORT}/mcp`);
+  console.log(`NYC Civic MCP v1.2.0 listening on http://localhost:${PORT}/mcp`);
 });
