@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import type { App } from "@modelcontextprotocol/ext-apps";
-import type { DistrictInfo } from "../mcp-app";
-import { colors } from "../mcp-app";
+import type { DistrictInfo } from "../shared";
+import { colors } from "../shared";
 
 interface Vote {
   id: string;

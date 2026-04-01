@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "@modelcontextprotocol/ext-apps";
+import { colors, fontFamily } from "./shared";
+import type { DistrictInfo } from "./shared";
 import { AddressBar } from "./components/AddressBar";
 import { RepsTab } from "./components/RepsTab";
 import { VotesTab } from "./components/VotesTab";
@@ -8,20 +10,11 @@ import { BillsTab } from "./components/BillsTab";
 import { PartyTab } from "./components/PartyTab";
 import { CommunityBoardTab } from "./components/CommunityBoardTab";
 import { NeighborhoodTab } from "./components/NeighborhoodTab";
-import { ChatTab } from "./components/ChatTab";
+// import { ChatTab } from "./components/ChatTab";
 
-// ── Types ──────────────────────────────────────────────────────────────
-export interface DistrictInfo {
-  council: number | null;
-  communityBoard: string | null;
-  stateSenate: number | null;
-  stateAssembly: number | null;
-  congressional: number | null;
-  electionDistrict: number | null;
-  borough: string | null;
-  lat: number | null;
-  lng: number | null;
-}
+// Re-export for backwards compat
+export type { DistrictInfo };
+export { colors };
 
 // ── App instance (module-level singleton) ──────────────────────────────
 const app = new App(
@@ -30,26 +23,12 @@ const app = new App(
   { autoResize: true },
 );
 
-// ── Design tokens ──────────────────────────────────────────────────────
-const colors = {
-  bg: "#0a0a0a",
-  card: "#1a1a1a",
-  border: "#2a2a2a",
-  text: "#e5e5e5",
-  muted: "#888",
-  accent: "#3b82f6",
-  demBlue: "#2563eb",
-  repRed: "#dc2626",
-  yes: "#22c55e",
-  no: "#ef4444",
-  absent: "#6b7280",
-};
-export { colors };
+// Design tokens imported from ./shared
 
-const fontFamily = "system-ui, -apple-system, sans-serif";
+// fontFamily imported from ./shared
 
 // ── Tab definitions ────────────────────────────────────────────────────
-type TabId = "reps" | "votes" | "bills" | "hood" | "party" | "cb" | "chat";
+type TabId = "reps" | "votes" | "bills" | "hood" | "party" | "cb";
 
 const tabs: { id: TabId; label: string }[] = [
   { id: "reps", label: "Reps" },
@@ -58,7 +37,6 @@ const tabs: { id: TabId; label: string }[] = [
   { id: "hood", label: "Neighborhood" },
   { id: "party", label: "Party" },
   { id: "cb", label: "CB" },
-  { id: "chat", label: "Chat" },
 ];
 
 // ── Dashboard component ────────────────────────────────────────────────
@@ -219,9 +197,7 @@ function Dashboard() {
         {activeTab === "cb" && districts && (
           <CommunityBoardTab app={app} district={districts.communityBoard} />
         )}
-        {activeTab === "chat" && districts && (
-          <ChatTab app={app} address={address} districts={districts} />
-        )}
+        {/* ChatTab disabled — localStorage crashes in sandboxed iframe */}
       </div>
     </div>
   );
@@ -230,10 +206,17 @@ function Dashboard() {
 // ── Mount ──────────────────────────────────────────────────────────────
 const root = document.getElementById("root");
 if (root) {
-  // Reset any default body styles and set min-height for autoResize
   document.body.style.margin = "0";
   document.body.style.padding = "0";
   document.body.style.background = colors.bg;
-  document.documentElement.style.minHeight = "700px";
-  createRoot(root).render(<Dashboard />);
+  try {
+    createRoot(root).render(<Dashboard />);
+  } catch (e: any) {
+    root.textContent = "Render error: " + e.message;
+  }
 }
+// Catch uncaught errors
+window.onerror = (msg) => {
+  const el = document.getElementById("root");
+  if (el) el.textContent = "Error: " + msg;
+};

@@ -66,16 +66,32 @@ registerAppTool(
 
 registerAppResource(
   server,
+  "NYC Civic Dashboard",
   resourceUri,
-  resourceUri,
-  { mimeType: RESOURCE_MIME_TYPE },
+  {
+    description: "NYC Civic Dashboard — reps, votes, legislation, Democratic Party org",
+    _meta: {
+      ui: {
+        csp: { connectDomains: [], resourceDomains: [] },
+      },
+    },
+  },
   async () => {
     const html = await fs.readFile(
       path.join(import.meta.dirname, "..", "dist", "mcp-app.html"),
       "utf-8",
     );
     return {
-      contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+      contents: [{
+        uri: resourceUri,
+        mimeType: RESOURCE_MIME_TYPE,
+        text: html,
+        _meta: {
+          ui: {
+            csp: { connectDomains: [], resourceDomains: [] },
+          },
+        },
+      }],
     };
   },
 );

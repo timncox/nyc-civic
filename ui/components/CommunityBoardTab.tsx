@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import type { App } from "@modelcontextprotocol/ext-apps";
-import { colors } from "../mcp-app";
+import { colors } from "../shared";
 
 interface CommunityBoard {
   id: string;
