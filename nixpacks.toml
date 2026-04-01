@@ -1,0 +1,11 @@
+[phases.build]
+cmds = [
+  "npm ci",
+  "INPUT=mcp-app.html npx vite build --emptyOutDir",
+  "npm run build:server",
+  "npm prune --omit=dev",
+  "mkdir -p data"
+]
+
+[start]
+cmd = "node dist/server.js"
