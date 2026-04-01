@@ -31,7 +31,7 @@ Enter any NYC address and get:
 ## Architecture
 
 ```
-server.ts          → HTTP shell (Express + StreamableHTTP, MCP App UI)
+server.ts          → HTTP shell (Express + StreamableHTTP, stateless transports)
 src/tools.ts       → All 22 MCP tool registrations
 src/apis/
   congress.ts      → Congress.gov API + House/Senate vote XML
@@ -53,13 +53,15 @@ src/
   types.ts         → Shared TypeScript types
 ui/
   mcp-app.tsx      → React dashboard (bundled to single HTML via Vite)
+  shared.ts        → Shared types and design tokens (breaks circular dep)
   components/      → Reps, Votes, Bills, Neighborhood, Party, CB, Chat tabs
 public/
   index.html       → Landing page at nyc.mmp.chat
 ```
 
-**Transport**: StreamableHTTP on port 3001
-**Deployed**: Railway at nyc.mmp.chat
+**Transport**: Stateless StreamableHTTP — single shared MCP server, one transport per request (no session management)
+**Deployed**: Railway (project: nyc-civic-server, service: nyc-civic) at nyc.mmp.chat
+**Build**: Multi-stage Dockerfile (build + runtime stages, production deps only)
 **UI**: React dashboard with 7 tabs, bundled as single HTML (MCP App)
 **No Playwright dependency** — all scrapers use direct fetch or REST APIs
 
