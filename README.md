@@ -63,6 +63,7 @@ public/
 **Deployed**: Railway (project: nyc-civic-server, service: nyc-civic) at nyc.mmp.chat
 **Build**: Multi-stage Dockerfile (build + runtime stages, production deps only)
 **UI**: React dashboard with 7 tabs, bundled as single HTML (MCP App)
+**Neighborhood tab**: Loads 5 NYC Open Data sections in parallel with proper `isError` handling and per-section error indicators
 **No Playwright dependency** — all scrapers use direct fetch or REST APIs
 
 ## Setup

@@ -55,10 +55,20 @@ export function NeighborhoodTab({ app, districts }: NeighborhoodTabProps) {
       { key: "trees", toolName: "get_street_trees", args: { lat, lng, radius_meters: 150 }, extract: d => d.trees },
     ];
 
+    let cancelled = false;
+
     for (const section of sections) {
       setLoading(prev => ({ ...prev, [section.key]: true }));
       app.callServerTool({ name: section.toolName, arguments: section.args })
         .then(result => {
+          if (cancelled) return;
+          if (result.isError) {
+            const msg = result.content?.[0] && "text" in result.content[0]
+              ? (result.content[0] as { text: string }).text
+              : "Request failed";
+            setErrors(prev => ({ ...prev, [section.key]: msg }));
+            return;
+          }
           if (result.content && Array.isArray(result.content) && result.content.length > 0) {
             const first = result.content[0];
             if ("text" in first && typeof first.text === "string") {
@@ -68,12 +78,15 @@ export function NeighborhoodTab({ app, districts }: NeighborhoodTabProps) {
           }
         })
         .catch(err => {
+          if (cancelled) return;
           setErrors(prev => ({ ...prev, [section.key]: err instanceof Error ? err.message : String(err) }));
         })
         .finally(() => {
-          setLoading(prev => ({ ...prev, [section.key]: false }));
+          if (!cancelled) setLoading(prev => ({ ...prev, [section.key]: false }));
         });
     }
+
+    return () => { cancelled = true; };
   }, [app, lat, lng]);
 
   if (lat == null || lng == null) {
@@ -260,7 +273,10 @@ function CollapsibleSection({
         <span style={{ fontSize: 13, fontWeight: 600, flex: 1, textAlign: "left" }}>{title}</span>
         <span style={{ fontSize: 11, color: colors.muted }}>{subtitle}</span>
         {loading && <Spinner />}
-        {!loading && count != null && (
+        {!loading && error && (
+          <span style={{ fontSize: 11, color: colors.no, fontWeight: 600 }} title={error}>!</span>
+        )}
+        {!loading && !error && count != null && (
           <span style={{
             fontSize: 11, fontWeight: 700, color: count > 0 ? colors.text : colors.muted,
             background: count > 0 ? `${color}22` : "transparent",
